@@ -41,7 +41,7 @@ Afterwards simply create a config file under `.config/keyboard-razer-highlighter
 
 ### Alternative method
 
-If you do not wish to create a daemon and use i3wm it is possible to run it by simply adding `exec --no-startup-id path/to/razer_keyboard_highlighter.py`, however I don't recommend doing this if you use pywal because pywal must be executed before this file for it to work and i3 does not sequencially execute commands as they are in its config file, a better alternative would be creating a bash script to first execute pywal and then executing `razer_keyboard_highlighter.py` and running it on i3wm startup like so `exec --no-startup-id script.sh`.
+If you do not wish to create a daemon and use i3wm it is possible to run it by simply adding `exec --no-startup-id path/to/razer_keyboard_highlighter.py` to your i3 config file, however I don't recommend doing this if you use pywal because pywal must be executed before this file for it to work and i3 does not sequencially execute commands as they are in its config file, a better alternative would be creating a bash script to first execute pywal and then executing `razer_keyboard_highlighter.py` and running it on i3wm startup like so `exec --no-startup-id script.sh`.
 
 ## Configuration file
 
@@ -53,7 +53,7 @@ Here is my personal config file that I will be detailing the workings of:
 pywal: true
 
 key_positions:
-  # Define positions for individual keys, the tuple corrsponds to (row, column) of they keyboard as defioned by openrazer
+  # Define positions for individual keys, the tuple corrsponds to (row, column) of they keyboard as defined by openrazer
   q: 
     - (2, 1)
   d: 
