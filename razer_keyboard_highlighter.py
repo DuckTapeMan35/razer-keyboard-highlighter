@@ -89,7 +89,7 @@ class KeyboardController:
     def load_config(self) -> Dict[str, Any]:
         """Load YAML configuration from script directory"""
         try:
-            # Get directory of current script
+            # Get config file
             script_dir = os.path.expanduser('~/.config/razer-keyboard-highlighter')
             config_path = os.path.join(script_dir, 'config.yaml')
             print(f"Loading config from: {config_path}")
