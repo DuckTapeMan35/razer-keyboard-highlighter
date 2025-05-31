@@ -124,8 +124,9 @@ class KeyboardController:
                 print("Config file not found, using default configuration")
                 return {
                     'pywal': True,
-                    'enable_i3': False,  # Disable i3 by default
+                    'i3': False,  # Disable i3 by default
                     'key_positions': {},
+                    'log': True,
                     'modes': {
                         'base': {
                             'rules': [
@@ -137,6 +138,8 @@ class KeyboardController:
             
             with open(config_path, 'r') as f:
                 config = yaml.safe_load(f)
+                if 'log' not in config:
+                    config['log'] = False
                 print("Config loaded successfully")
                 return config
                 
@@ -144,6 +147,10 @@ class KeyboardController:
             print(f"Error loading config: {e}")
             traceback.print_exc()
             return {}
+
+    def should_log(self) -> bool:
+        """Check if logging is enabled in config"""
+        return self.config.get('log', True)
 
     def parse_key_positions(self) -> Dict[str, List[Tuple[int, int]]]:
         """Parse key positions from config, with fallback values"""
@@ -173,20 +180,25 @@ class KeyboardController:
                                         col = int(parts[1].strip())
                                         converted.append((row, col))
                                     else:
-                                        print(f"Invalid tuple format for key '{key}': {item}")
+                                        if self.should_log():
+                                            print(f"Invalid tuple format for key '{key}': {item}")
                                 except ValueError as e:
-                                    print(f"Error parsing position '{item}' for key '{key}': {e}")
+                                    if self.should_log():
+                                        print(f"Error parsing position '{item}' for key '{key}': {e}")
                             else:
-                                print(f"Invalid position format for key '{key}': {item}")
+                                if self.should_log():
+                                    print(f"Invalid position format for key '{key}': {item}")
                         positions[key] = converted
                     elif isinstance(value, (tuple, list)) and len(value) == 2:
                         # Single position
                         positions[key] = [(int(value[0]), int(value[1]))]
                     else:
-                        print(f"Invalid position format for key '{key}': {value}")
+                        if self.should_log():
+                            print(f"Invalid position format for key '{key}': {value}")
                         positions[key] = []
                 except Exception as e:
-                    print(f"Error parsing position for key '{key}': {e}")
+                    if self.should_log():
+                        print(f"Error parsing position for key '{key}': {e}")
                     positions[key] = []
         
         # Add default positions for essential keys as integers
@@ -212,7 +224,8 @@ class KeyboardController:
             if key not in positions:
                 # Convert to list of integer tuples
                 positions[key] = [(int(r), int(c)) for r, c in pos_list]
-                print(f"Added default position for key '{key}'")
+                if self.should_log():
+                    print(f"Added default position for key '{key}'")
         
         # Ensure all positions are integers
         for key in positions:
@@ -256,13 +269,15 @@ class KeyboardController:
         for device in self.device_manager.devices:
             # Format VID/PID as "vid:pid" string
             vidpid = f"{device._vid:04X}:{device._pid:04X}"
-            print(f"Checking device: {device.name} (VID:PID={vidpid})")
+            if self.should_log():
+                print(f"Checking device: {device.name} (VID:PID={vidpid})")
             
             if vidpid in razer_keyboards:
-                print(f"Using keyboard: {device.name} (VID:PID={vidpid})")
+                if self.should_log():
+                    print(f"Using keyboard: {device.name} (VID:PID={vidpid})")
                 return device
-        
-        print("No Razer keyboard found with known VID/PID")
+        if self.should_log():
+            print("No Razer keyboard found with known VID/PID")
         return None
 
     def load_colors(self) -> List[Tuple[int, int, int]]:
@@ -270,10 +285,12 @@ class KeyboardController:
         if self.config.get('pywal', True):
             colors = self.read_wal_colors('/home/duck/.cache/wal/colors')
             if colors:
-                print(f"Loaded {len(colors)} colors from pywal")
+                if self.should_log():
+                    print(f"Loaded {len(colors)} colors from pywal")
                 return colors
             else:
-                print("Using fallback colors")
+                if self.should_log():
+                    print("Using fallback colors")
                 return [
                     (55, 59, 67),    # Background
                     (171, 178, 191),  # Foreground
@@ -286,7 +303,8 @@ class KeyboardController:
                     (92, 99, 112)     # Light gray
                 ]
         else:
-            print("Pywal disabled, using default colors")
+            if self.should_log():
+                print("Pywal disabled, using default colors")
             return [
                 (100, 100, 100),  # Default color
                 (200, 200, 200)   # Highlight color
@@ -297,7 +315,8 @@ class KeyboardController:
         try:
             rgb_colors = []
             if not os.path.exists(file_path):
-                print(f"Wal colors file not found at {file_path}")
+                if self.should_log():
+                    print(f"Wal colors file not found at {file_path}")
                 return []
                 
             with open(file_path, 'r') as file:
@@ -313,7 +332,8 @@ class KeyboardController:
                         rgb_colors.append((r, g, b))
             return rgb_colors
         except Exception as e:
-            print(f"Error reading wal colors: {e}")
+            if self.should_log():
+                print(f"Error reading wal colors: {e}")
             return []
 
     def resolve_color(self, color_spec: Any) -> Tuple[int, int, int]:
@@ -341,7 +361,8 @@ class KeyboardController:
                         b = int(hex_color[4:6], 16)
                         return (r, g, b)
         except Exception as e:
-            print(f"Error resolving color {color_spec}: {e}")
+            if self.should_log():
+                print(f"Error resolving color {color_spec}: {e}")
         
         return (0, 0, 0)  # Default to black
 
@@ -366,7 +387,8 @@ class KeyboardController:
                         break
             return workspace_names
         except Exception as e:
-            print(f"Error getting workspaces: {e}")
+            if self.should_log():
+                print(f"Error getting workspaces: {e}")
             return []
 
     def update_workspaces(self):
@@ -378,15 +400,19 @@ class KeyboardController:
             with self.i3_lock:
                 try:
                     self.non_empty_workspaces = self.find_non_empty_workspaces()
-                    print(f"Updated workspaces: {self.non_empty_workspaces}")
+                    if self.should_log():
+                        print(f"Updated workspaces: {self.non_empty_workspaces}")
                 except Exception as e:
-                    print(f"Error updating workspaces: {e}")
+                    if self.should_log():
+                        print(f"Error updating workspaces: {e}")
         else:
             try:
                 self.non_empty_workspaces = self.find_non_empty_workspaces()
-                print(f"Updated workspaces: {self.non_empty_workspaces}")
+                if self.should_log():
+                    print(f"Updated workspaces: {self.non_empty_workspaces}")
             except Exception as e:
-                print(f"Error updating workspaces: {e}")
+                if self.should_log():
+                    print(f"Error updating workspaces: {e}")
 
     def reload_config(self):
         """Reload configuration from file"""
@@ -397,14 +423,15 @@ class KeyboardController:
                 self.colors = self.load_colors()
                 
                 # Re-evaluate i3 requirement
-                self.i3_enabled = self.config.get('enable_i3', False) or self.needs_i3_integration()
-                print(f"i3 integration: {'ENABLED' if self.i3_enabled else 'DISABLED'}")
-                
-                print("Configuration reloaded")
+                self.i3_enabled = self.config.get('i3', False) or self.needs_i3_integration()
+                if self.should_log():
+                    print(f"i3 integration: {'ENABLED' if self.i3_enabled else 'DISABLED'}")
+                    print("Configuration reloaded")
                 # Update lighting after reload
                 self.update_lighting()
             except Exception as e:
-                print(f"Error reloading config: {e}")
+                if self.should_log():
+                    print(f"Error reloading config: {e}")
 
     def get_keys_positions(self, key_spec: Any) -> List[Tuple[int, int]]:
         """Get positions for a key or key group"""
@@ -417,7 +444,8 @@ class KeyboardController:
                     positions.extend(self.get_keys_positions(k))
                 return positions
         except Exception as e:
-            print(f"Error getting positions for {key_spec}: {e}")
+            if self.should_log():
+                print(f"Error getting positions for {key_spec}: {e}")
         return []
 
     def apply_rule(self, rule: Dict[str, Any]):
@@ -427,12 +455,14 @@ class KeyboardController:
             keys = rule.get('keys', [])
             positions = self.get_keys_positions(keys)
             if not positions:
-                print(f"  No positions found for keys: {keys}")
+                if self.should_log():
+                    print(f"No positions found for keys: {keys}")
                 return
             
             # Handle per-key colors
             if 'colors' in rule:
-                print(f"  Applying per-key colors for {keys}")
+                if self.should_log():
+                    print(f"Applying per-key colors for {keys}")
                 colors = [self.resolve_color(c) for c in rule['colors']]
                 for i, pos in enumerate(positions):
                     try:
@@ -448,12 +478,14 @@ class KeyboardController:
             if condition == 'non_empty_workspaces':
                 # Skip if i3 not enabled
                 if not self.i3_enabled:
-                    print("  Skipping workspace condition - i3 disabled")
+                    if self.should_log():
+                        print("Skipping workspace condition - i3 disabled")
                     return
                     
                 value = rule.get('value')
                 color = self.resolve_color(rule.get('color'))
-                print(f"  Applying condition for {keys}: non_empty={value}")
+                if self.should_log():
+                    print(f"Applying condition for {keys}: non_empty={value}")
                 
                 # Only apply to number keys
                 if keys == ['numbers']:
@@ -471,7 +503,8 @@ class KeyboardController:
             # Handle simple color rule
             if 'color' in rule:
                 color = self.resolve_color(rule['color'])
-                print(f"  Setting {keys} to {color}")
+                if self.should_log():
+                    print(f"Setting {keys} to {color}")
                 for pos in positions:
                     try:
                         row = int(pos[0])
@@ -480,7 +513,8 @@ class KeyboardController:
                     except (ValueError, TypeError):
                         continue
         except Exception as e:
-            print(f"Error applying rule: {e}")
+            if self.should_log():
+                print(f"Error applying rule: {e}")
             traceback.print_exc()
 
     def normalize_key(self, key_identifier: str) -> str:
@@ -521,7 +555,8 @@ class KeyboardController:
             
             return 'base'
         except Exception as e:
-            print(f"Error determining current mode: {e}")
+            if self.should_log():
+                print(f"Error determining current mode: {e}")
             return 'base'
 
     def update_lighting(self):
@@ -538,14 +573,16 @@ class KeyboardController:
             
             # Fallback to base mode if current mode not defined
             if mode_config is None and current_mode != 'base':
-                print(f"Mode '{current_mode}' not defined, falling back to base")
+                if self.should_log():
+                    print(f"Mode '{current_mode}' not defined, falling back to base")
                 mode_config = self.config.get('modes', {}).get('base', {})
             
             # If still no config, use empty
             if mode_config is None:
                 mode_config = {}
             
-            print(f"Applying lighting for mode: {current_mode}")
+            if self.should_log():
+                print(f"Applying lighting for mode: {current_mode}")
             
             # Apply all rules for the current mode
             for rule in mode_config.get('rules', []):
@@ -554,7 +591,8 @@ class KeyboardController:
             # Draw changes
             self.razer_keyboard.fx.advanced.draw()
         except Exception as e:
-            print(f"Error updating lighting: {e}")
+            if self.should_log():
+                print(f"Error updating lighting: {e}")
             traceback.print_exc()
 
     def on_press(self, key):
@@ -590,7 +628,8 @@ class KeyboardController:
             # Track pressed keys in order (for non-modifiers)
             if key_identifier and key not in self.modifier_keys:
                 normalized = self.normalize_key(key_identifier)
-                print(f"Key pressed: {normalized}")
+                if self.should_log():
+                    print(f"Key pressed: {normalized}")
                 
                 # Add to end of pressed keys list
                 if normalized not in self.pressed_keys:
@@ -604,7 +643,8 @@ class KeyboardController:
             if self.i3_enabled and key in [Key.cmd, Key.alt]:
                 self.update_workspaces()
         except Exception as e:
-            print(f"Error in on_press: {e}")
+            if self.should_log():
+                print(f"Error in on_press: {e}")
 
     def on_release(self, key):
         """Handle key release events"""
@@ -617,7 +657,8 @@ class KeyboardController:
                     self.active_modifiers.remove(key)
                 # Remove from pressed keys
                 if mod_name in self.pressed_keys:
-                    print(f"Modifier released: {mod_name}")
+                    if self.should_log():
+                        print(f"Modifier released: {mod_name}")
                     self.pressed_keys.remove(mod_name)
             else:
                 # Handle non-modifier releases
@@ -642,7 +683,8 @@ class KeyboardController:
                 if key_identifier:
                     normalized = self.normalize_key(key_identifier)
                     if normalized in self.pressed_keys:
-                        print(f"Key released: {normalized}")
+                        if self.should_log():
+                            print(f"Key released: {normalized}")
                         self.pressed_keys.remove(normalized)
             
             # Update lighting if:
@@ -651,7 +693,8 @@ class KeyboardController:
             if self.pressed_keys or key in self.modifier_keys:
                 self.update_lighting()
         except Exception as e:
-            print(f"Error in on_release: {e}")
+            if self.should_log():
+                print(f"Error in on_release: {e}")
 
     def start_i3_listener(self):
         """Listen for i3 window events (only if enabled)"""
@@ -661,10 +704,12 @@ class KeyboardController:
         try:
             i3 = i3ipc.Connection()
             i3.on('window', self.on_i3_event)
-            print("Starting i3 event listener")
+            if self.should_log():
+                print("Starting i3 event listener")
             i3.main()
         except Exception as e:
-            print(f"Error in i3 listener: {e}")
+            if self.should_log():
+                print(f"Error in i3 listener: {e}")
 
     def on_i3_event(self, i3, event):
         """Handle i3 window events (only if enabled)"""
@@ -676,7 +721,8 @@ class KeyboardController:
                 self.update_workspaces()
                 self.update_lighting()
         except Exception as e:
-            print(f"Error in i3 event handler: {e}")
+            if self.should_log():
+                print(f"Error in i3 event handler: {e}")
 
     def start_pywal_watcher(self):
         """Start watching pywal color file for changes"""
@@ -689,11 +735,13 @@ class KeyboardController:
         self.watchdog_observer = Observer()
         self.watchdog_observer.schedule(event_handler, pywal_path, recursive=False)
         self.watchdog_observer.start()
-        print(f"Started watching pywal colors at {pywal_path}")
+        if self.should_log():
+            print(f"Started watching pywal colors at {pywal_path}")
 
     def handle_pywal_update(self):
         """Called when pywal colors change - update lighting"""
-        print("Pywal colors updated - reloading")
+        if self.should_log():
+            print("Pywal colors updated - reloading")
         self.pywal_updated = True
 
     def reload_pywal_colors(self):
@@ -702,7 +750,8 @@ class KeyboardController:
             self.colors = self.load_colors()
         self.pywal_updated = False
         self.update_lighting()
-        print("Colors reloaded from pywal")
+        if self.should_log():
+            print("Colors reloaded from pywal")
 
     def run(self):
         """Main application loop"""
@@ -713,7 +762,8 @@ class KeyboardController:
                 # Start i3 listener thread only if enabled
                 self.i3_thread = threading.Thread(target=self.start_i3_listener, daemon=True)
                 self.i3_thread.start()
-                print("i3 listener started")
+                if self.should_log():
+                    print("i3 listener started")
             
             # Start keyboard listener
             self.key_listener = keyboard.Listener(
@@ -721,18 +771,21 @@ class KeyboardController:
                 on_release=self.on_release
             )
             self.key_listener.start()
-            print("Keyboard listener started")
+            if self.should_log():
+                print("Keyboard listener started")
             
             # Start pywal file watcher if enabled
             if self.config.get('pywal', True):
                 self.start_pywal_watcher()
-                print("Pywal file watcher started")
+                if self.should_log():
+                    print("Pywal file watcher started")
             
             # Apply initial lighting
             self.update_lighting()
             
             # Main loop
-            print("Entering main loop (Press Ctrl+C to exit)")
+            if self.should_log():
+                print("Entering main loop (Press Ctrl+C to exit)")
             while True:
                 time.sleep(1)
                 # Check for pywal updates
@@ -743,7 +796,8 @@ class KeyboardController:
                 if self.i3_enabled:
                     self.update_workspaces()
         except KeyboardInterrupt:
-            print("Exiting...")
+            if self.should_log():
+                print("Exiting...")
             if self.key_listener:
                 self.key_listener.stop()
             if self.watchdog_observer:
@@ -758,7 +812,8 @@ class KeyboardController:
             except:
                 pass
         except Exception as e:
-            print(f"Error in main loop: {e}")
+            if self.should_log():
+                print(f"Error in main loop: {e}")
             traceback.print_exc()
 
 if __name__ == "__main__":
