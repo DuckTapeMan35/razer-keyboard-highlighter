@@ -2,7 +2,6 @@
 from openrazer.client import DeviceManager
 from pynput import keyboard
 from pynput.keyboard import Key, KeyCode
-import i3ipc
 import threading
 import time
 import yaml
@@ -13,6 +12,13 @@ from collections import deque
 from typing import Dict, List, Tuple, Any
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
+
+# Conditionally import i3ipc only if needed
+try:
+    import i3ipc
+    I3_AVAILABLE = True
+except ImportError:
+    I3_AVAILABLE = False
 
 class PywalFileHandler(FileSystemEventHandler):
     """Handles pywal color file changes"""
@@ -54,7 +60,6 @@ class KeyboardController:
             self.active_modifiers = set()
             self.non_empty_workspaces = []
             self.pressed_keys = deque()  # Track keys in press order
-            self.i3_lock = threading.Lock()
             self.colors_lock = threading.Lock()
             self.colors = self.load_colors()
             self.key_listener = None
@@ -73,6 +78,16 @@ class KeyboardController:
                 Key.ctrl_r: 'ctrl'
             }
             
+            # Check if i3 integration is needed
+            self.i3_enabled = self.config.get('i3', False) or self.needs_i3_integration()
+            print(f"i3 integration: {'ENABLED' if self.i3_enabled else 'DISABLED'}")
+            
+            # Create lock only if i3 is enabled
+            if self.i3_enabled:
+                self.i3_lock = threading.Lock()
+            else:
+                self.i3_lock = None
+            
             # Ensure base mode is defined
             if 'modes' not in self.config:
                 self.config['modes'] = {}
@@ -86,6 +101,17 @@ class KeyboardController:
             traceback.print_exc()
             raise
 
+    def needs_i3_integration(self) -> bool:
+        """Check if any rules require i3 workspace information"""
+        if not I3_AVAILABLE:
+            return False
+            
+        for mode_name, mode_config in self.config.get('modes', {}).items():
+            for rule in mode_config.get('rules', []):
+                if rule.get('condition') == 'non_empty_workspaces':
+                    return True
+        return False
+
     def load_config(self) -> Dict[str, Any]:
         """Load YAML configuration from script directory"""
         try:
@@ -98,6 +124,7 @@ class KeyboardController:
                 print("Config file not found, using default configuration")
                 return {
                     'pywal': True,
+                    'enable_i3': False,  # Disable i3 by default
                     'key_positions': {},
                     'modes': {
                         'base': {
@@ -216,7 +243,7 @@ class KeyboardController:
             "1532:024E", "1532:0252", "1532:0253", "1532:0255", "1532:0256",
             "1532:0257", "1532:0258", "1532:0259", "1532:025A", "1532:025C",
             "1532:025D", "1532:025E", "1532:0266", "1532:0268", "1532:0269",
-            "1532:026A", "1532:026B", "1532:026C", "1532:026D", "1532:026E",
+            "1532:026A", "1532:026B", "1532:026C", "153极:026D", "1532:026E",
             "1532:026F", "1532:0270", "1532:0271", "1532:0276", "1532:0279",
             "1532:027A", "1532:0282", "1532:0287", "1532:028A", "1532:028B",
             "1532:028C", "1532:028D", "1532:028F", "1532:0290", "1532:0292",
@@ -319,7 +346,10 @@ class KeyboardController:
         return (0, 0, 0)  # Default to black
 
     def find_non_empty_workspaces(self):
-        """Get list of non-empty workspaces from i3"""
+        """Get list of non-empty workspaces from i3 (if enabled)"""
+        if not self.i3_enabled or not I3_AVAILABLE:
+            return []
+            
         try:
             i3 = i3ipc.Connection()
             workspaces = i3.get_workspaces()
@@ -340,8 +370,18 @@ class KeyboardController:
             return []
 
     def update_workspaces(self):
-        """Update workspace status with locking"""
-        with self.i3_lock:
+        """Update workspace status (only if i3 enabled)"""
+        if not self.i3_enabled:
+            return
+            
+        if self.i3_lock:
+            with self.i3_lock:
+                try:
+                    self.non_empty_workspaces = self.find_non_empty_workspaces()
+                    print(f"Updated workspaces: {self.non_empty_workspaces}")
+                except Exception as e:
+                    print(f"Error updating workspaces: {e}")
+        else:
             try:
                 self.non_empty_workspaces = self.find_non_empty_workspaces()
                 print(f"Updated workspaces: {self.non_empty_workspaces}")
@@ -355,6 +395,11 @@ class KeyboardController:
                 self.config = self.load_config()
                 self.key_positions = self.parse_key_positions()
                 self.colors = self.load_colors()
+                
+                # Re-evaluate i3 requirement
+                self.i3_enabled = self.config.get('enable_i3', False) or self.needs_i3_integration()
+                print(f"i3 integration: {'ENABLED' if self.i3_enabled else 'DISABLED'}")
+                
                 print("Configuration reloaded")
                 # Update lighting after reload
                 self.update_lighting()
@@ -401,6 +446,11 @@ class KeyboardController:
             # Handle conditional rules
             condition = rule.get('condition')
             if condition == 'non_empty_workspaces':
+                # Skip if i3 not enabled
+                if not self.i3_enabled:
+                    print("  Skipping workspace condition - i3 disabled")
+                    return
+                    
                 value = rule.get('value')
                 color = self.resolve_color(rule.get('color'))
                 print(f"  Applying condition for {keys}: non_empty={value}")
@@ -456,7 +506,7 @@ class KeyboardController:
             mode_name = '_'.join(self.pressed_keys)
             
             # Check if this exact press order exists
-            if len(self.pressed_keys) <= 2:
+            if len(self.pressed_keys) <= 2 and len(self.pressed_keys) > 0:
                 if mode_name in self.config.get('modes', {}):
                     return mode_name
                 elif self.pressed_keys[0] in self.config.get('modes', {}):
@@ -550,8 +600,8 @@ class KeyboardController:
             if self.pressed_keys:
                 self.update_lighting()
             
-            # Update workspaces when modifier state changes
-            if key in [Key.cmd, Key.alt]:
+            # Update workspaces when modifier state changes (only if i3 enabled)
+            if self.i3_enabled and key in [Key.cmd, Key.alt]:
                 self.update_workspaces()
         except Exception as e:
             print(f"Error in on_press: {e}")
@@ -604,7 +654,10 @@ class KeyboardController:
             print(f"Error in on_release: {e}")
 
     def start_i3_listener(self):
-        """Listen for i3 window events"""
+        """Listen for i3 window events (only if enabled)"""
+        if not self.i3_enabled or not I3_AVAILABLE:
+            return
+            
         try:
             i3 = i3ipc.Connection()
             i3.on('window', self.on_i3_event)
@@ -614,7 +667,10 @@ class KeyboardController:
             print(f"Error in i3 listener: {e}")
 
     def on_i3_event(self, i3, event):
-        """Handle i3 window events - update lighting when workspace changes"""
+        """Handle i3 window events (only if enabled)"""
+        if not self.i3_enabled:
+            return
+            
         try:
             if event.change in ['new', 'close', 'move']:
                 self.update_workspaces()
@@ -651,12 +707,13 @@ class KeyboardController:
     def run(self):
         """Main application loop"""
         try:
-            self.update_workspaces()
-            
-            # Start i3 listener thread
-            self.i3_thread = threading.Thread(target=self.start_i3_listener, daemon=True)
-            self.i3_thread.start()
-            print("i3 listener started")
+            if self.i3_enabled:
+                self.update_workspaces()
+                
+                # Start i3 listener thread only if enabled
+                self.i3_thread = threading.Thread(target=self.start_i3_listener, daemon=True)
+                self.i3_thread.start()
+                print("i3 listener started")
             
             # Start keyboard listener
             self.key_listener = keyboard.Listener(
@@ -682,8 +739,9 @@ class KeyboardController:
                 if self.pywal_updated:
                     self.reload_pywal_colors()
                 
-                # Periodically update workspaces
-                self.update_workspaces()
+                # Periodically update workspaces only if enabled
+                if self.i3_enabled:
+                    self.update_workspaces()
         except KeyboardInterrupt:
             print("Exiting...")
             if self.key_listener:
