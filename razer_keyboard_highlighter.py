@@ -459,25 +459,12 @@ class KeyboardController:
             if mode_name in self.config.get('modes', {}):
                 return mode_name
             
-            # Check if we have any modifiers pressed
-            modifier_mode = None
-            for key in self.pressed_keys:
-                # If we have a modifier that defines a mode, use it
-                if key in ['super', 'shift', 'alt', 'ctrl']:
-                    if key in self.config.get('modes', {}):
-                        modifier_mode = key
-                        break
-            
-            # If we found a modifier mode, use it
-            if modifier_mode:
-                return modifier_mode
-            
-            # If no exact match or modifier mode, check for two-key combos
-            if len(self.pressed_keys) >= 2:
-                # Use the last two keys pressed (current held + new key)
-                last_two = '_'.join(self.pressed_keys[-2:])
-                if last_two in self.config.get('modes', {}):
-                    return last_two
+            # use first 2 pressed keys as mode
+            if len(self.pressed_keys) > 2:
+                # Use the first two keys pressed (ignore the new key)
+                first_two = '_'.join([self.pressed_keys[0], self.pressed_keys[1]])
+                if first_two in self.config.get('modes', {}):
+                    return first_two
             
             return 'base'
         except Exception as e:
