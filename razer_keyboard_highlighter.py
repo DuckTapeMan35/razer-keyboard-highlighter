@@ -456,10 +456,11 @@ class KeyboardController:
             mode_name = '_'.join(self.pressed_keys)
             
             # Check if this exact press order exists
-            if mode_name in self.config.get('modes', {}):
-                return mode_name
-            elif self.pressed_keys[0] in self.config.get('modes', {}):
-                return str(self.pressed_keys[0])
+            if len(self.pressed_keys) <= 2:
+                if mode_name in self.config.get('modes', {}):
+                    return mode_name
+                elif self.pressed_keys[0] in self.config.get('modes', {}):
+                    return str(self.pressed_keys[0])
             
             # use first 2 pressed keys as mode if more than 2 keys are being pressed
             if len(self.pressed_keys) > 2:
