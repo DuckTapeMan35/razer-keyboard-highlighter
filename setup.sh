@@ -27,7 +27,7 @@ chmod +x "$CONFIG_DIR/$SCRIPT_NAME"
 # Install Arch Linux dependencies
 echo "Installing required packages..."
 sudo pacman -Sy --noconfirm python python-pip python-virtualenv openrazer-daemon python-openrazer
-sudo systemctl enable --now openrazer-daemon.service
+systemctl enable --now --user openrazer-daemon.service
 
 # Add user to plugdev group
 echo "Adding user to plugdev group..."
