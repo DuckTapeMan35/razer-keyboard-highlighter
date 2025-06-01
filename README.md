@@ -6,7 +6,7 @@ Support for highlighting keys when up to two keys are held according to a config
 
 ### General requirements
 
-- i3wm (for i3wm integration, for now it is a requirement even if you don't have any rules that relate to it)
+- i3wm (for i3wm integration)
 - pywal (for pywal support)
 - python
 
