@@ -8,6 +8,7 @@ USER=$(whoami)
 CONFIG_DIR="$HOME/.config/razer-keyboard-highlighter"
 SCRIPT_NAME="razer_keyboard_highlighter.py"
 SERVICE_NAME="razer-keyboard-highlighter.service"
+CONFIG_NAME="config.yaml"
 
 # Verify script exists
 if [ ! -f "$(pwd)/$SCRIPT_NAME" ]; then
@@ -20,8 +21,9 @@ echo "Creating config directory: $CONFIG_DIR"
 mkdir -p "$CONFIG_DIR"
 
 # Copy script to config directory
-echo "Copying script to config directory..."
+echo "Copying script and config file to config directory..."
 cp "$(pwd)/$SCRIPT_NAME" "$CONFIG_DIR/$SCRIPT_NAME"
+cp "$(pwd)/$CONFIG_NAME" "$CONFIG_DIR/$CONFIG_NAME"
 chmod +x "$CONFIG_DIR/$SCRIPT_NAME"
 
 # Install Arch Linux dependencies
