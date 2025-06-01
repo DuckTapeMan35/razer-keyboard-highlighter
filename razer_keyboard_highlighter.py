@@ -66,6 +66,7 @@ class KeyboardController:
             self.i3_thread = None
             self.pywal_updated = False
             self.watchdog_observer = None
+            self.current_mode = "base"
             
             # Define modifier keys
             self.modifier_keys = {
@@ -537,22 +538,17 @@ class KeyboardController:
         """Determine current mode based on key press order with modifier priority"""
         try:
             # Create mode name based on key press order
-            mode_name = '_'.join(self.pressed_keys)
+            if not self.pressed_keys:
+                self.current_mode = "base"
+
+            full_sequence = '_'.join(self.pressed_keys)
             
-            # Check if this exact press order exists
-            if len(self.pressed_keys) <= 2 and len(self.pressed_keys) > 0:
-                if mode_name in self.config.get('modes', {}):
-                    return mode_name
-                elif self.pressed_keys[0] in self.config.get('modes', {}):
-                    return str(self.pressed_keys[0])
-            
-            # use first 2 pressed keys as mode if more than 2 keys are being pressed
-            if len(self.pressed_keys) > 2:
-                # Use the first two keys pressed (ignore the new key)
-                first_two = '_'.join([self.pressed_keys[0], self.pressed_keys[1]])
-                if first_two in self.config.get('modes', {}):
-                    return first_two
-            
+            if full_sequence in self.config.get('modes', {}):
+                self.current_mode = full_sequence
+                return full_sequence
+            else:
+                return self.current_mode
+
             return 'base'
         except Exception as e:
             if self.should_log():
