@@ -37,7 +37,7 @@ chmod +x setup.sh
 ./setup.sh
 ```
 
-Afterwards simply create a config file under `.config/keyboard-razer-highlighter/` (where the script will be placed), details on how a proper config file should look below, in this repository there is also my personal config file as an example.
+Afterwards simply edit the config file under `.config/keyboard-razer-highlighter/` (where the script will be placed), details on how a proper config file should look below, in this repository there is also my personal config file as an example.
 
 ### Alternative method
 
