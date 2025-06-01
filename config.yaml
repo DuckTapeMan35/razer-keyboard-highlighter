@@ -1,17 +1,9 @@
-pywal: true
+pywal: false
+i3: false
+log: false
 
 key_positions:
   # Define positions for individual keys, the tuple corrsponds to (row, column) of they keyboard as defioned by openrazer
-  q: 
-    - (2, 1)
-  d: 
-    - (3, 3)
-  x:
-    - (4, 3)
-  z: 
-    - (4, 2)
-  s:
-    - (3, 2)
   1_key:
     - (1,1)
   2_key:
@@ -64,31 +56,19 @@ modes:
   base:
     rules:
       - keys: [all]
-        color: color[1]
+        color: [0,255,0]
 
   # Single-key modes
   super:
     rules:
       - keys: [numbers]
-        condition: non_empty_workspaces
-        value: false
-        color: color[6]
-      - keys: [numbers]
-        condition: non_empty_workspaces
-        value: true
-        color: color[1]
+        color: [255,255,255]
       - keys: [super]
         color: [255, 255, 255]
       - keys: [enter]
-        color: color[7]
-      - keys: [d]
-        color: color[2] 
-      - keys: [x]
-        color: [255, 0, 0]
-      - keys: [z]
-        color: color[3]
+        color: [255,255,255]
       - keys: [arrows]
-        color: color[1]
+        color: [255,255,255]
       - keys: [shift]
         color: [255, 255, 255]
 
@@ -96,24 +76,24 @@ modes:
   super_shift:
     rules:
       - keys: [numbers]
-        condition: non_empty_workspaces
-        value: false
-        color: color[6]
-      - keys: [numbers]
-        condition: non_empty_workspaces
-        value: true
-        color: color[1]
+        color: [255,255,255]
       - keys: [super]
-        color: [255, 255, 255]
-      - keys: [q]
-        color: [255, 0, 0]
+        color: [0, 255, 0]
       - keys: [shift]
         color: [255, 255, 255]
       - keys: [arrows]
-        color: color[1]
-      - keys: [s]
-        color: color[6]
+        color: [0,0,255]
 
+  shift_super:
+    rules:
+      - keys: [numbers]
+        color: [255,255,255]
+      - keys: [super]
+        color: [0, 255, 0]
+      - keys: [shift]
+        color: [255, 255, 255]
+      - keys: [arrows]
+        color: [0,0,255]
   
   alt:
     rules:
