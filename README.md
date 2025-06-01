@@ -12,9 +12,9 @@ Support for highlighting keys when up to two keys are held according to a config
 
 ### Python libraries
 
-- i3ipc 
-- pynput 
-- watchdog 
+- i3ipc
+- pynput
+- watchdog
 - pyyaml
 - openrazer
 
@@ -47,13 +47,17 @@ If you do not wish to create a daemon and use i3wm it is possible to run it by s
 
 The configuration file should be named config.yaml and be placed under `.config/razer-keyboard-highlighter/`
 
+Note: whenever the config file is changed the service must be restarted.
+
 Here is my personal config file that I will be detailing the workings of:
 
 ```yaml
 pywal: true
+i3: true
+log: false
 
 key_positions:
-  # Define positions for individual keys, the tuple corrsponds to (row, column) of they keyboard as defined by openrazer
+  # Define positions for individual keys, the tuple corrsponds to (row, column) of they keyboard as defioned by openrazer
   q: 
     - (2, 1)
   d: 
@@ -64,6 +68,14 @@ key_positions:
     - (4, 2)
   s:
     - (3, 2)
+  p:
+    - (2, 10)
+  v:
+    - (4, 5)
+  b:
+    - (4, 6)
+  e:
+    - (2, 3)
   1_key:
     - (1,1)
   2_key:
@@ -92,6 +104,12 @@ key_positions:
     - (3, 13)
   shift:
     - (4, 0)
+  alt:
+    - (5, 2)
+  space:
+    - (5, 6)
+  ctrl:
+    - (5, 0)
 
   # Define groups of keys
   numbers:
@@ -117,6 +135,14 @@ modes:
     rules:
       - keys: [all]
         color: color[1]
+      - keys: [numbers]
+        condition: non_empty_workspaces
+        value: false
+        color: color[3]
+      - keys: [numbers]
+        condition: non_empty_workspaces
+        value: true
+        color: color[7]
 
   # Single-key modes
   super:
@@ -124,11 +150,11 @@ modes:
       - keys: [numbers]
         condition: non_empty_workspaces
         value: false
-        color: color[6]
+        color: color[3]
       - keys: [numbers]
         condition: non_empty_workspaces
         value: true
-        color: color[1]
+        color: color[7]
       - keys: [super]
         color: [255, 255, 255]
       - keys: [enter]
@@ -139,10 +165,16 @@ modes:
         color: [255, 0, 0]
       - keys: [z]
         color: color[3]
+      - keys: [v]
+        color: color[4]
+      - keys: [b]
+        color: color[5]
       - keys: [arrows]
         color: color[1]
       - keys: [shift]
         color: [255, 255, 255]
+      - keys: [e]
+        color: color[6]
 
   # Two-key combination modes are formated as KeyBeingHeld_NewKeyBeingHeld
   super_shift:
@@ -150,11 +182,11 @@ modes:
       - keys: [numbers]
         condition: non_empty_workspaces
         value: false
-        color: color[6]
+        color: color[3]
       - keys: [numbers]
         condition: non_empty_workspaces
         value: true
-        color: color[1]
+        color: color[7]
       - keys: [super]
         color: [255, 255, 255]
       - keys: [q]
@@ -164,9 +196,38 @@ modes:
       - keys: [arrows]
         color: color[1]
       - keys: [s]
-        color: color[6]
+        color: color[1]
+      - keys: [p]
+        color: color[3]
+      - keys: [space]
+        color: color[4]
 
-  
+  # modes are order dependant so if you want both orders to work you need to replicate them and reverse the order here
+  shift_super:
+    rules:
+      - keys: [numbers]
+        condition: non_empty_workspaces
+        value: false
+        color: color[3]
+      - keys: [numbers]
+        condition: non_empty_workspaces
+        value: true
+        color: color[7]
+      - keys: [super]
+        color: [255, 255, 255]
+      - keys: [q]
+        color: [255, 0, 0]
+      - keys: [shift]
+        color: [255, 255, 255]
+      - keys: [arrows]
+        color: color[1]
+      - keys: [s]
+        color: color[1]
+      - keys: [p]
+        color: color[3]
+      - keys: [space]
+        color: color[4]
+
   alt:
     rules:
       - keys: [1_key]
@@ -189,11 +250,39 @@ modes:
         color: [43,86,138]
       - keys: [10_key]
         color: [131,97,130]
+      - keys: [alt]
+        color: [255,255,255]
+
+  ctrl_alt:
+    rules:
+      - keys: [s]
+        color: color[1]
+      - keys: [alt]
+        color: [255,255,255]
+      - keys: [ctrl]
+        color: [255,255,255]
+
+  alt_ctrl:
+    rules:
+      - keys: [s]
+        color: color[1]
+      - keys: [alt]
+        color: [255,255,255]
+      - keys: [ctrl]
+        color: [255,255,255]
 ```
 
 ### Pywal
 
 the first line should be `pywal: true/false`, this will determine wether or not pywal will be integrated.
+
+### i3
+
+`i3: true/false` determines wether or not i3 is needed, however if rules that need i3 integration are present on the config, even if it is false rules will be applied, leaving out this line is the same as `i3: false`.
+
+### Log
+
+There are several print statements in the code so the line `log: true/false` activates or deactivates them, by default log is `false`. If you are running this as the daemon created with `./setup.sh` it would be printing to a file called `service.log` which would get very big very fast.
 
 ### Key positions
 
@@ -235,3 +324,5 @@ As an example if key_name is 6 and it's position corresponds to the 6 key on the
 - Double keys
 
 Double keys refers to when 2 keys are being held together, they follow the structure of FirstKeyHeld_SecondKeyHeld. As an example let's take super_shift, this mode and its rules will only trigger when first super is held and then shift is held.
+
+Note: if you don't care about order you need to add both super_shift and shift_super with the same rules.
