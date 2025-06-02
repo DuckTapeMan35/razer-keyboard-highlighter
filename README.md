@@ -317,7 +317,7 @@ KeyHeld:
         color: color[pywal_color_numeber] or [R,G,B]
 ```
 
-For now the only condition is non_empty_workspaces, for it to work the workspaces must be renamed to match the keys they correspond to.
+For now the only condition is non_empty_workspaces, for it to work the workspaces must be renamed to numbers (1-10) and it can only be applied to numbers.
 
 As an example if key_name is 6 and it's position corresponds to the 6 key on the keyboard and the value of the condition is true the key will be lit up with the given color if there is a window open on the workspace, if the value is false then it will be lit up with the provided color if there are no windows in the corresponding workspace.
 
