@@ -30,6 +30,16 @@ class PywalFileHandler(FileSystemEventHandler):
         if event.src_path.endswith('colors'):
             self.callback()
 
+class ConfigFileHandler(FileSystemEventHandler):
+    """Handles pywal color file changes"""
+    def __init__(self, callback):
+        super().__init__()
+        self.callback = callback
+    
+    def on_modified(self, event):
+        if event.src_path.endswith('config.yaml'):
+            self.callback()
+
 class KeyboardController:
     def __init__(self):
         try:
@@ -65,7 +75,9 @@ class KeyboardController:
             self.key_listener = None
             self.i3_thread = None
             self.pywal_updated = False
-            self.watchdog_observer = None
+            self.config_updated = False
+            self.pywal_watchdog_observer = None
+            self.config_watchdog_observer = None
             self.current_mode = "base"
             
             # Define modifier keys
@@ -428,6 +440,8 @@ class KeyboardController:
                 if self.should_log():
                     print(f"i3 integration: {'ENABLED' if self.i3_enabled else 'DISABLED'}")
                     print("Configuration reloaded")
+
+                self.config_updated = False
                 # Update lighting after reload
                 self.update_lighting()
             except Exception as e:
@@ -727,18 +741,39 @@ class KeyboardController:
             os.makedirs(pywal_path, exist_ok=True)
             print(f"Created pywal directory: {pywal_path}")
         
-        event_handler = PywalFileHandler(self.handle_pywal_update)
-        self.watchdog_observer = Observer()
-        self.watchdog_observer.schedule(event_handler, pywal_path, recursive=False)
-        self.watchdog_observer.start()
+        pywal_event_handler = PywalFileHandler(self.handle_pywal_update)
+        self.pywal_watchdog_observer = Observer()
+        self.pywal_watchdog_observer.schedule(pywal_event_handler, pywal_path, recursive=False)
+        self.pywal_watchdog_observer.start()
         if self.should_log():
             print(f"Started watching pywal colors at {pywal_path}")
+
+    def start_config_watcher(self):
+        """Start watching pywal color file for changes"""
+        config_path = os.path.expanduser('~/.config/razer-keyboard-highlighter')
+        if not os.path.exists(config_path):
+            os.makedirs(config_path, exist_ok=True)
+            print(f"Created config directory: {config_path}")
+        
+        config_event_handler = ConfigFileHandler(self.handle_config_update)
+        self.config_watchdog_observer = Observer()
+        self.config_watchdog_observer.schedule(config_event_handler, config_path, recursive=False)
+        self.config_watchdog_observer.start()
+        if self.should_log():
+            print(f"Started watching config at {config_path}")
+
 
     def handle_pywal_update(self):
         """Called when pywal colors change - update lighting"""
         if self.should_log():
             print("Pywal colors updated - reloading")
         self.pywal_updated = True
+
+    def handle_config_update(self):
+        """Called when configs change - update lighting"""
+        if self.should_log():
+            print("Config updated - reloading")
+        self.config_updated = True
 
     def reload_pywal_colors(self):
         """Reload colors and update lighting"""
@@ -775,6 +810,10 @@ class KeyboardController:
                 self.start_pywal_watcher()
                 if self.should_log():
                     print("Pywal file watcher started")
+
+            self.start_config_watcher()
+            if self.should_log():
+                print("Config file watcher started")
             
             # Apply initial lighting
             self.update_lighting()
@@ -787,6 +826,9 @@ class KeyboardController:
                 # Check for pywal updates
                 if self.pywal_updated:
                     self.reload_pywal_colors()
+                # Check for config updates
+                if self.config_updated:
+                    self.reload_config()
                 
                 # Periodically update workspaces only if enabled
                 if self.i3_enabled:
@@ -796,9 +838,12 @@ class KeyboardController:
                 print("Exiting...")
             if self.key_listener:
                 self.key_listener.stop()
-            if self.watchdog_observer:
-                self.watchdog_observer.stop()
-                self.watchdog_observer.join()
+            if self.pywal_watchdog_observer:
+                self.pywal_watchdog_observer.stop()
+                self.pywal_watchdog_observer.join()
+            if self.config_watchdog_observer:
+                self.config_watchdog_observer.stop()
+                self.config_watchdog_observer.join()
             # Turn off keyboard lights
             try:
                 for r in range(self.rows):
