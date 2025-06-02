@@ -1,6 +1,6 @@
 # Razer keyboard highlighter
 
-Support for highlighting keys when up to two keys are held according to a configuration file with pywal and i3wm integration
+Support for highlighting keys when held according to a configuration file with pywal and i3wm integration, supports key combinations of any order/size
 
 ## Requirements
 
@@ -321,8 +321,8 @@ For now the only condition is non_empty_workspaces, for it to work the workspace
 
 As an example if key_name is 6 and it's position corresponds to the 6 key on the keyboard and the value of the condition is true the key will be lit up with the given color if there is a window open on the workspace, if the value is false then it will be lit up with the provided color if there are no windows in the corresponding workspace.
 
-- Double keys
+- n keys
 
-Double keys refers to when 2 keys are being held together, they follow the structure of FirstKeyHeld_SecondKeyHeld. As an example let's take super_shift, this mode and its rules will only trigger when first super is held and then shift is held.
+n keys refers to when n keys are being held together, they follow the structure of FirstKeyHeld_SecondKeyHeld_etc . As an example let's take super_shift, this mode and its rules will only trigger when first super is held and then shift is held.
 
 Note: if you don't care about order you need to add both super_shift and shift_super with the same rules.
