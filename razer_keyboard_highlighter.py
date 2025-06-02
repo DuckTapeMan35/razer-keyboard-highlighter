@@ -269,7 +269,7 @@ class KeyboardController:
             "1532:024E", "1532:0252", "1532:0253", "1532:0255", "1532:0256",
             "1532:0257", "1532:0258", "1532:0259", "1532:025A", "1532:025C",
             "1532:025D", "1532:025E", "1532:0266", "1532:0268", "1532:0269",
-            "1532:026A", "1532:026B", "1532:026C", "153极:026D", "1532:026E",
+            "1532:026A", "1532:026B", "1532:026C", "1532:026D", "1532:026E",
             "1532:026F", "1532:0270", "1532:0271", "1532:0276", "1532:0279",
             "1532:027A", "1532:0282", "1532:0287", "1532:028A", "1532:028B",
             "1532:028C", "1532:028D", "1532:028F", "1532:0290", "1532:0292",
@@ -549,20 +549,34 @@ class KeyboardController:
         return special_keys.get(key_identifier, key_identifier)
 
     def get_current_mode(self) -> str:
-        """Determine current mode based on key press order with modifier priority"""
+        """Determine current mode based on active modifiers with consistent ordering"""
         try:
-            # Create mode name based on key press order
-            if not self.pressed_keys:
-                self.current_mode = "base"
-
-            full_sequence = '_'.join(self.pressed_keys)
+            # Get active modifier names in sorted order for consistent mode names
+            active_mod_names = sorted({
+                self.modifier_keys[k] 
+                for k in self.active_modifiers 
+                if k in self.modifier_keys
+            })
             
-            if full_sequence in self.config.get('modes', {}):
-                self.current_mode = full_sequence
-                return full_sequence
-            else:
-                return self.current_mode
-
+            # Create mode name from active modifiers
+            if active_mod_names:
+                mode_name = '_'.join(active_mod_names)
+                if mode_name in self.config.get('modes', {}):
+                    self.current_mode = mode_name
+                    if self.should_log():
+                        print(f"Active modifier mode: {mode_name}")
+                    return mode_name
+            
+            # Check for full key sequence mode only if no modifiers are active
+            if self.pressed_keys:
+                full_sequence = '_'.join(self.pressed_keys)
+                if full_sequence in self.config.get('modes', {}):
+                    self.current_mode = full_sequence
+                    if self.should_log():
+                        print(f"Key sequence mode: {full_sequence}")
+                    return full_sequence
+            
+            # Fallback to base mode if no special mode is active
             return 'base'
         except Exception as e:
             if self.should_log():
@@ -615,6 +629,8 @@ class KeyboardController:
                 # Add modifier to pressed keys if not already present
                 if mod_name not in self.pressed_keys:
                     self.pressed_keys.append(mod_name)
+                if self.should_log():
+                    print(f"Modifier pressed: {mod_name} (active: {[self.modifier_keys[k] for k in self.active_modifiers]})")
             
             # Get key identifier for non-modifiers
             key_identifier = None
@@ -645,9 +661,8 @@ class KeyboardController:
                 if normalized not in self.pressed_keys:
                     self.pressed_keys.append(normalized)
             
-            # Only update lighting if keys are pressed
-            if self.pressed_keys:
-                self.update_lighting()
+            # Update lighting
+            self.update_lighting()
             
             # Update workspaces when modifier state changes (only if i3 enabled)
             if self.i3_enabled and key in [Key.cmd, Key.alt]:
@@ -668,7 +683,7 @@ class KeyboardController:
                 # Remove from pressed keys
                 if mod_name in self.pressed_keys:
                     if self.should_log():
-                        print(f"Modifier released: {mod_name}")
+                        print(f"Modifier released: {mod_name} (active: {[self.modifier_keys[k] for k in self.active_modifiers]})")
                     self.pressed_keys.remove(mod_name)
             else:
                 # Handle non-modifier releases
@@ -697,11 +712,8 @@ class KeyboardController:
                             print(f"Key released: {normalized}")
                         self.pressed_keys.remove(normalized)
             
-            # Update lighting if:
-            # 1. Keys are still pressed, OR
-            # 2. We just released a modifier that was keeping a state active
-            if self.pressed_keys or key in self.modifier_keys:
-                self.update_lighting()
+            # Update lighting
+            self.update_lighting()
         except Exception as e:
             if self.should_log():
                 print(f"Error in on_release: {e}")
