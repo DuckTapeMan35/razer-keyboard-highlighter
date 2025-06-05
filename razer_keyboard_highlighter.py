@@ -31,7 +31,7 @@ class PywalFileHandler(FileSystemEventHandler):
             self.callback()
 
 class ConfigFileHandler(FileSystemEventHandler):
-    """Handles pywal color file changes"""
+    """Handles config file changes"""
     def __init__(self, callback):
         super().__init__()
         self.callback = callback
@@ -78,7 +78,7 @@ class KeyboardController:
             self.config_updated = False
             self.pywal_watchdog_observer = None
             self.config_watchdog_observer = None
-            self.current_mode = "base"
+            self.current_mode = "base"  # Initialize to base mode
             
             # Define modifier keys
             self.modifier_keys = {
@@ -549,35 +549,26 @@ class KeyboardController:
         return special_keys.get(key_identifier, key_identifier)
 
     def get_current_mode(self) -> str:
-        """Determine current mode based on active modifiers with consistent ordering"""
+        """Determine current mode based on active keys and current state"""
         try:
-            # Get active modifier names in sorted order for consistent mode names
-            active_mod_names = sorted({
-                self.modifier_keys[k] 
-                for k in self.active_modifiers 
-                if k in self.modifier_keys
-            })
+            if not self.pressed_keys:
+                return 'base'
+
+            # Build full sequence string
+            full_sequence = '_'.join(self.pressed_keys)
+            config_modes = self.config.get('modes', {})
             
-            # Create mode name from active modifiers
-            if active_mod_names:
-                mode_name = '_'.join(active_mod_names)
-                if mode_name in self.config.get('modes', {}):
-                    self.current_mode = mode_name
-                    if self.should_log():
-                        print(f"Active modifier mode: {mode_name}")
-                    return mode_name
+            # 1. Check if full sequence has a dedicated mode
+            if full_sequence in config_modes:
+                if self.should_log():
+                    print(f"Sequence mode matched: {full_sequence}")
+                return full_sequence
             
-            # Check for full key sequence mode only if no modifiers are active
-            if self.pressed_keys:
-                full_sequence = '_'.join(self.pressed_keys)
-                if full_sequence in self.config.get('modes', {}):
-                    self.current_mode = full_sequence
-                    if self.should_log():
-                        print(f"Key sequence mode: {full_sequence}")
-                    return full_sequence
+            # 2. Fallback: Maintain current mode
+            if self.should_log():
+                print(f"No mode match, maintaining current: {self.current_mode}")
+            return self.current_mode
             
-            # Fallback to base mode if no special mode is active
-            return 'base'
         except Exception as e:
             if self.should_log():
                 print(f"Error determining current mode: {e}")
@@ -591,14 +582,14 @@ class KeyboardController:
                 for c in range(self.cols):
                     self.razer_keyboard.fx.advanced.matrix[r, c] = (0, 0, 0)
             
-            # Apply current mode with fallback
-            current_mode = self.get_current_mode()
-            mode_config = self.config.get('modes', {}).get(current_mode)
+            # Apply current mode
+            self.current_mode = self.get_current_mode()
+            mode_config = self.config.get('modes', {}).get(self.current_mode)
             
             # Fallback to base mode if current mode not defined
-            if mode_config is None and current_mode != 'base':
+            if mode_config is None and self.current_mode != 'base':
                 if self.should_log():
-                    print(f"Mode '{current_mode}' not defined, falling back to base")
+                    print(f"Mode '{self.current_mode}' not defined, falling back to base")
                 mode_config = self.config.get('modes', {}).get('base', {})
             
             # If still no config, use empty
@@ -606,7 +597,7 @@ class KeyboardController:
                 mode_config = {}
             
             if self.should_log():
-                print(f"Applying lighting for mode: {current_mode}")
+                print(f"Applying lighting for mode: {self.current_mode}")
             
             # Apply all rules for the current mode
             for rule in mode_config.get('rules', []):
@@ -619,101 +610,61 @@ class KeyboardController:
                 print(f"Error updating lighting: {e}")
             traceback.print_exc()
 
+    def normalize_key_event(self, key) -> str:
+        """Convert any key press event to consistent string representation"""
+        # Handle special keys
+        if key == Key.enter:
+            return 'enter'
+        if key == Key.space:
+            return 'space'
+        if key == Key.tab:
+            return 'tab'
+        if key == Key.esc:
+            return 'esc'
+        if key == Key.backspace:
+            return 'backspace'
+        if key == Key.cmd:
+            return 'super'
+        if key in (Key.shift, Key.shift_r):
+            return 'shift'
+        if key in (Key.alt, Key.alt_r):
+            return 'alt'
+        if key in (Key.ctrl, Key.ctrl_r):
+            return 'ctrl'
+        
+        # Handle character keys
+        if isinstance(key, KeyCode) and key.char:
+            return key.char.lower()
+        
+        # Fallback to key name
+        return key.name.lower() if hasattr(key, 'name') else str(key)
+
     def on_press(self, key):
-        """Handle key press events"""
         try:
-            # Track modifiers
-            if key in self.modifier_keys:
-                mod_name = self.modifier_keys[key]
-                self.active_modifiers.add(key)
-                # Add modifier to pressed keys if not already present
-                if mod_name not in self.pressed_keys:
-                    self.pressed_keys.append(mod_name)
-                if self.should_log():
-                    print(f"Modifier pressed: {mod_name} (active: {[self.modifier_keys[k] for k in self.active_modifiers]})")
+            key_identifier = self.normalize_key_event(key)
+            if self.should_log():
+                print(f"Key pressed: {key_identifier}")
             
-            # Get key identifier for non-modifiers
-            key_identifier = None
-            if isinstance(key, Key):
-                # Map special keys to our identifiers
-                if key == Key.enter:
-                    key_identifier = 'enter'
-                elif key == Key.space:
-                    key_identifier = 'space'
-                elif key == Key.tab:
-                    key_identifier = 'tab'
-                elif key == Key.esc:
-                    key_identifier = 'esc'
-                elif key == Key.backspace:
-                    key_identifier = 'backspace'
-                else:
-                    key_identifier = key.name.lower() if hasattr(key, 'name') else str(key)
-            elif isinstance(key, KeyCode) and key.char:
-                key_identifier = key.char.lower()
+            if key_identifier not in self.pressed_keys:
+                self.pressed_keys.append(key_identifier)
             
-            # Track pressed keys in order (for non-modifiers)
-            if key_identifier and key not in self.modifier_keys:
-                normalized = self.normalize_key(key_identifier)
-                if self.should_log():
-                    print(f"Key pressed: {normalized}")
-                
-                # Add to end of pressed keys list
-                if normalized not in self.pressed_keys:
-                    self.pressed_keys.append(normalized)
-            
-            # Update lighting
             self.update_lighting()
             
-            # Update workspaces when modifier state changes (only if i3 enabled)
-            if self.i3_enabled and key in [Key.cmd, Key.alt]:
-                self.update_workspaces()
         except Exception as e:
             if self.should_log():
                 print(f"Error in on_press: {e}")
 
     def on_release(self, key):
-        """Handle key release events"""
         try:
-            # Handle modifier releases
-            if key in self.modifier_keys:
-                mod_name = self.modifier_keys[key]
-                # Remove from active modifiers
-                if key in self.active_modifiers:
-                    self.active_modifiers.remove(key)
-                # Remove from pressed keys
-                if mod_name in self.pressed_keys:
-                    if self.should_log():
-                        print(f"Modifier released: {mod_name} (active: {[self.modifier_keys[k] for k in self.active_modifiers]})")
-                    self.pressed_keys.remove(mod_name)
-            else:
-                # Handle non-modifier releases
-                key_identifier = None
-                if isinstance(key, Key):
-                    if key == Key.enter:
-                        key_identifier = 'enter'
-                    elif key == Key.space:
-                        key_identifier = 'space'
-                    elif key == Key.tab:
-                        key_identifier = 'tab'
-                    elif key == Key.esc:
-                        key_identifier = 'esc'
-                    elif key == Key.backspace:
-                        key_identifier = 'backspace'
-                    else:
-                        key_identifier = key.name.lower() if hasattr(key, 'name') else str(key)
-                elif isinstance(key, KeyCode) and key.char:
-                    key_identifier = key.char.lower()
-                
-                # Remove released keys
-                if key_identifier:
-                    normalized = self.normalize_key(key_identifier)
-                    if normalized in self.pressed_keys:
-                        if self.should_log():
-                            print(f"Key released: {normalized}")
-                        self.pressed_keys.remove(normalized)
+            key_identifier = self.normalize_key_event(key)
+            if self.should_log():
+                print(f"Key released: {key_identifier}")
             
-            # Update lighting
+            if key_identifier in self.pressed_keys:
+                self.pressed_keys.remove(key_identifier)
+            
             self.update_lighting()
+            
         except Exception as e:
             if self.should_log():
                 print(f"Error in on_release: {e}")
@@ -761,7 +712,7 @@ class KeyboardController:
             print(f"Started watching pywal colors at {pywal_path}")
 
     def start_config_watcher(self):
-        """Start watching pywal color file for changes"""
+        """Start watching config file for changes"""
         config_path = os.path.expanduser('~/.config/razer-keyboard-highlighter')
         if not os.path.exists(config_path):
             os.makedirs(config_path, exist_ok=True)
@@ -773,7 +724,6 @@ class KeyboardController:
         self.config_watchdog_observer.start()
         if self.should_log():
             print(f"Started watching config at {config_path}")
-
 
     def handle_pywal_update(self):
         """Called when pywal colors change - update lighting"""
