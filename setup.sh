@@ -6,8 +6,9 @@
 # Configuration
 USER=$(whoami)
 CONFIG_DIR="$HOME/.config/razer-keyboard-highlighter"
-SCRIPT_NAME="razer_keyboard_highlighter.py"
-SERVICE_NAME="razer-keyboard-highlighter.service"
+RAZER_CONTROLLER="razer_controller.py"
+KEYBOARD_LISTENER="keyboard_listener.py"
+SERVICE_NAME="keyboard.service"
 CONFIG_NAME="config.yaml"
 
 # Verify script exists
@@ -20,15 +21,17 @@ fi
 echo "Creating config directory: $CONFIG_DIR"
 mkdir -p "$CONFIG_DIR"
 
-# Copy script to config directory
+# Copy scripts to config directory
 echo "Copying script and config file to config directory..."
-cp "$(pwd)/$SCRIPT_NAME" "$CONFIG_DIR/$SCRIPT_NAME"
+cp "$(pwd)/$RAZER_CONTROLLER" "/usr/bin/$RAZER_CONTROLLER"
+cp "$(pwd)/$KEYBOARD_LISTENER" "/usr/bin/$KEYBOARD_LISTENER"
 cp "$(pwd)/$CONFIG_NAME" "$CONFIG_DIR/$CONFIG_NAME"
-chmod +x "$CONFIG_DIR/$SCRIPT_NAME"
+chmod +x "/usr/bin/$RAZER_CONTROLLER"
+chmod +x "/usr/bin/$KEYBOARD_LISTENER"
 
 # Install Arch Linux dependencies
 echo "Installing required packages..."
-sudo pacman -Sy --noconfirm python python-pip python-virtualenv openrazer-daemon python-openrazer
+sudo pacman -Sy --noconfirm python python-pip python-virtualenv openrazer-daemon python-openrazer python-watchdog python-yaml
 systemctl enable --now --user openrazer-daemon.service
 
 # Add user to plugdev group
@@ -41,8 +44,9 @@ virtualenv --system-site-packages "$CONFIG_DIR/.venv"
 
 # Install Python dependencies
 echo "Installing Python packages..."
-"$CONFIG_DIR/.venv/bin/pip" install --upgrade pip
-"$CONFIG_DIR/.venv/bin/pip" install i3ipc pynput watchdog pyyaml
+sudo python -m venv /root/keyboard_venv
+sudo /root/razer_keyboard_highlighter_venv/bin/pip install --upgrade
+sudo /root/razer_keyboard_highlighter_venv/bin/pip install keyboard
 
 # Create default config file if needed
 if [ ! -f "$CONFIG_DIR/config.yaml" ]; then
@@ -60,38 +64,27 @@ fi
 
 # Create systemd service
 echo "Creating systemd service..."
-mkdir -p "$HOME/.config/systemd/user"
 
 # Use current DISPLAY and XAUTHORITY values
 CURRENT_DISPLAY=${DISPLAY:-":0"}
-CURRENT_XAUTHORITY=${XAUTHORITY:-"$HOME/.Xauthority"}
 
-cat > "$HOME/.config/systemd/user/$SERVICE_NAME" << EOL
+cat > "/etc/systemd/system/keyboard-listener.service" << EOL
 [Unit]
-Description=Razer Keyboard Lighting Daemon
-After=graphical-session.target
-PartOf=graphical-session.target
+Description=Keyboard Listener Service
 
 [Service]
 Type=simple
-ExecStart=$CONFIG_DIR/.venv/bin/python $CONFIG_DIR/$SCRIPT_NAME
-Restart=always
-RestartSec=10
-Environment="DISPLAY=$CURRENT_DISPLAY"
-Environment="XAUTHORITY=$CURRENT_XAUTHORITY"
-Environment="PYTHONUNBUFFERED=1"
-Environment="HOME=$HOME"
-Environment="USER=$USER"
-StandardOutput=file:$CONFIG_DIR/service.log
-StandardError=file:$CONFIG_DIR/service.log
+User=root
+ExecStart=/usr/bin/python /usr/bin/keyboard_listener /home/$USER/.razer-keyboard-pipe/events.pipe $USER
+Restart=on-failure
+RestartSec=5
+Environment=$CURRENT_DISPLAY
+StandardOutput=journal
+StandardError=journal
 
 [Install]
 WantedBy=default.target
 EOL
-
-# Enable user services
-echo "Enabling user service persistence..."
-sudo loginctl enable-linger $USER
 
 # Start the service
 echo "Starting service..."
@@ -100,7 +93,7 @@ systemctl --user enable "$SERVICE_NAME"
 systemctl --user start "$SERVICE_NAME"
 
 echo "Installation complete!"
-echo "The keyboard lighting service is now running."
+echo "The keyboard Listener service is now running."
 echo ""
 echo "Important: Log out and back in to apply group changes"
 echo ""

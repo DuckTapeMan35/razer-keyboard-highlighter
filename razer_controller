@@ -1,17 +1,19 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
 from openrazer.client import DeviceManager
-from pynput import keyboard
-from pynput.keyboard import Key, KeyCode
 import threading
 import time
 import yaml
 import os
 import re
 import traceback
+import json
 from collections import deque
 from typing import Dict, List, Tuple, Any
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
+import subprocess
+import select
+import socket
 
 # Conditionally import i3ipc only if needed
 try:
@@ -66,14 +68,20 @@ class KeyboardController:
             self.key_positions = self.parse_key_positions()
             print(f"Loaded key positions for: {', '.join(self.key_positions.keys())}")
             
+            # Get window manager type from config
+            self.wm_type = self.config.get('window_manager', 'i3').lower()  # Default to i3
+            if self.wm_type not in ['i3', 'hyprland']:
+                print(f"Warning: Invalid window manager '{self.wm_type}'. Defaulting to 'i3'")
+                self.wm_type = 'i3'
+                
+            print(f"Using window manager: {self.wm_type}")
+            
             # Initialize other components
-            self.active_modifiers = set()
-            self.non_empty_workspaces = []
             self.pressed_keys = deque()  # Track keys in press order
             self.colors_lock = threading.Lock()
             self.colors = self.load_colors()
             self.key_listener = None
-            self.i3_thread = None
+            self.wm_thread = None  # Renamed from i3_thread
             self.pywal_updated = False
             self.config_updated = False
             self.pywal_watchdog_observer = None
@@ -82,30 +90,32 @@ class KeyboardController:
             
             # Define modifier keys
             self.modifier_keys = {
-                Key.cmd: 'super',
-                Key.shift: 'shift',
-                Key.shift_r: 'shift',
-                Key.alt: 'alt',
-                Key.alt_r: 'alt',
-                Key.ctrl: 'ctrl',
-                Key.ctrl_r: 'ctrl'
+                'super': ['windows', 'cmd', 'super'],
+                'shift': ['shift'],
+                'alt': ['alt', 'alt gr'],
+                'ctrl': ['ctrl', 'control']
             }
             
-            # Check if i3 integration is needed
-            self.i3_enabled = self.config.get('i3', False) or self.needs_i3_integration()
-            print(f"i3 integration: {'ENABLED' if self.i3_enabled else 'DISABLED'}")
+            # Pipe for keyboard events (assume first file is already running)
+            self.pipe_dir = os.path.expanduser('~/.razer-keyboard-pipe')
+            self.pipe_path = os.path.join(self.pipe_dir, 'events.pipe')
+            self.pipe_fd = None
             
-            # Create lock only if i3 is enabled
-            if self.i3_enabled:
-                self.i3_lock = threading.Lock()
+            # Check if workspace integration is needed
+            self.wm_integration_enabled = self.config.get('workspaces', False) or self.needs_wm_integration()
+            print(f"Workspace integration: {'ENABLED' if self.wm_integration_enabled else 'DISABLED'}")
+            
+            # Create lock only if workspace integration is enabled
+            if self.wm_integration_enabled:
+                self.wm_lock = threading.Lock()
             else:
-                self.i3_lock = None
+                self.wm_lock = None
             
             # Ensure base mode is defined
             if 'modes' not in self.config:
                 self.config['modes'] = {}
             if 'base' not in self.config['modes']:
-                self.config['modes']['base'] = {'rules': [{'keys': ['all'], 'color': 'color[1]'}]}
+                self.config['modes']['base'] = {'rules': [{'keys': ['all'], 'color': '(0,255,0)'}]}
             
             print("Keyboard controller initialized successfully")
             
@@ -114,11 +124,8 @@ class KeyboardController:
             traceback.print_exc()
             raise
 
-    def needs_i3_integration(self) -> bool:
-        """Check if any rules require i3 workspace information"""
-        if not I3_AVAILABLE:
-            return False
-            
+    def needs_wm_integration(self) -> bool:
+        """Check if any rules require workspace information"""
         for mode_name, mode_config in self.config.get('modes', {}).items():
             for rule in mode_config.get('rules', []):
                 if rule.get('condition') == 'non_empty_workspaces':
@@ -137,13 +144,13 @@ class KeyboardController:
                 print("Config file not found, using default configuration")
                 return {
                     'pywal': True,
-                    'i3': False,  # Disable i3 by default
+                    'workspaces': False,      # Disable workspace integration by default
                     'key_positions': {},
                     'log': True,
                     'modes': {
                         'base': {
                             'rules': [
-                                {'keys': ['all'], 'color': 'color[1]'}
+                                {'keys': ['all'], 'color': '(0,255,0)'}
                             ]
                         }
                     }
@@ -151,8 +158,12 @@ class KeyboardController:
             
             with open(config_path, 'r') as f:
                 config = yaml.safe_load(f)
-                if 'log' not in config:
-                    config['log'] = False
+                
+                # Set defaults if not present
+                config.setdefault('pywal', False)
+                config.setdefault('workspaces', False)
+                config.setdefault('log', False)
+                
                 print("Config loaded successfully")
                 return config
                 
@@ -379,17 +390,38 @@ class KeyboardController:
         
         return (0, 0, 0)  # Default to black
 
-    def find_non_empty_workspaces(self):
-        """Get list of non-empty workspaces from i3 (if enabled)"""
-        if not self.i3_enabled or not I3_AVAILABLE:
-            return []
+    def get_hyprland_workspaces(self):
+        """Get list of non-empty workspaces from Hyprland"""
+        try:
+            # Use hyprctl to get workspace info
+            result = subprocess.run(
+                ['hyprctl', 'workspaces', '-j'],
+                capture_output=True,
+                text=True,
+                timeout=1.0
+            )
+            workspaces = json.loads(result.stdout)
             
+            non_empty = []
+            for ws in workspaces:
+                if ws['windows'] > 0:
+                    # Only consider workspaces with IDs 1-10 for keyboard highlighting
+                    if 1 <= ws['id'] <= 10:
+                        non_empty.append(str(ws['id']))
+            return non_empty
+        except Exception as e:
+            if self.should_log():
+                print(f"Error getting Hyprland workspaces: {e}")
+            return []
+
+    def get_i3_or_sway_workspaces(self):
+        """ Get list of non-empty workspaces from sway/hyprland"""
         try:
             i3 = i3ipc.Connection()
             workspaces = i3.get_workspaces()
             tree = i3.get_tree()
             workspace_names = []
-            
+
             for ws in workspaces:
                 if ws.name == "__i3_scratch":
                     continue
@@ -401,16 +433,33 @@ class KeyboardController:
             return workspace_names
         except Exception as e:
             if self.should_log():
-                print(f"Error getting workspaces: {e}")
+                print(f"Error getting i3/sway workspaces: {e}")
             return []
 
+    def find_non_empty_workspaces(self):
+        """Get list of non-empty workspaces from the configured WM"""
+        if not self.wm_integration_enabled:
+            return []
+            
+        try:
+            if self.wm_type == 'i3' and I3_AVAILABLE:
+                return self.get_i3_or_sway_workspaces()
+            elif self.wm_type == 'hyprland':
+                return self.get_hyprland_workspaces()
+                
+        except Exception as e:
+            if self.should_log():
+                print(f"Error getting workspaces: {e}")
+        return []
+
     def update_workspaces(self):
-        """Update workspace status (only if i3 enabled)"""
-        if not self.i3_enabled:
+        """Update workspace status (only if integration enabled)"""
+
+        if not self.wm_integration_enabled:
             return
             
-        if self.i3_lock:
-            with self.i3_lock:
+        if self.wm_lock:
+            with self.wm_lock:
                 try:
                     self.non_empty_workspaces = self.find_non_empty_workspaces()
                     if self.should_log():
@@ -435,10 +484,11 @@ class KeyboardController:
                 self.key_positions = self.parse_key_positions()
                 self.colors = self.load_colors()
                 
-                # Re-evaluate i3 requirement
-                self.i3_enabled = self.config.get('i3', False) or self.needs_i3_integration()
+                # Re-evaluate workspace requirement
+                self.wm_type = self.config.get('window_manager', 'i3').lower()
+                self.wm_integration_enabled = self.config.get('workspaces', False) or self.needs_wm_integration()
                 if self.should_log():
-                    print(f"i3 integration: {'ENABLED' if self.i3_enabled else 'DISABLED'}")
+                    print(f"Workspace integration: {'ENABLED' if self.wm_integration_enabled else 'DISABLED'}")
                     print("Configuration reloaded")
 
                 self.config_updated = False
@@ -491,10 +541,10 @@ class KeyboardController:
             # Handle conditional rules
             condition = rule.get('condition')
             if condition == 'non_empty_workspaces':
-                # Skip if i3 not enabled
-                if not self.i3_enabled:
+                # Skip if workspace integration not enabled
+                if not self.wm_integration_enabled:
                     if self.should_log():
-                        print("Skipping workspace condition - i3 disabled")
+                        print("Skipping workspace condition - integration disabled")
                     return
                     
                 value = rule.get('value')
@@ -532,62 +582,96 @@ class KeyboardController:
                 print(f"Error applying rule: {e}")
             traceback.print_exc()
 
-    def normalize_key_event(self, key) -> str:
-        """Convert any key press event to consistent string representation"""
+    def normalize_key_str(self, key_name: str) -> str:
+        """Normalize key name string"""
+        name = key_name.lower()
+        
+        # Handle modifier keys
+        for mod, aliases in self.modifier_keys.items():
+            if name in aliases:
+                return mod
+        
         # Handle special keys
-        if key == Key.enter:
-            return 'enter'
-        if key == Key.space:
-            return 'space'
-        if key == Key.tab:
-            return 'tab'
-        if key == Key.esc:
-            return 'esc'
-        if key == Key.backspace:
-            return 'backspace'
-        if key == Key.cmd:
-            return 'super'
-        if key in (Key.shift, Key.shift_r):
-            return 'shift'
-        if key in (Key.alt, Key.alt_r):
-            return 'alt'
-        if key in (Key.ctrl, Key.ctrl_r):
-            return 'ctrl'
+        special_keys = {
+            'enter': 'enter',
+            'space': 'space',
+            'tab': 'tab',
+            'esc': 'esc',
+            'escape': 'esc',
+            'backspace': 'backspace',
+            'up': 'up',
+            'down': 'down',
+            'left': 'left',
+            'right': 'right',
+            '`': 'backtick',
+            '~': 'tilde',
+            '!': 'exclamation',
+            '@': 'at',
+            '#': 'hash',
+            '$': 'dollar',
+            '%': 'percent',
+            '^': 'caret',
+            '&': 'ampersand',
+            '*': 'asterisk',
+            '(': 'paren_left',
+            ')': 'paren_right',
+            '-': 'minus',
+            '_': 'underscore',
+            '=': 'equal',
+            '+': 'plus',
+            '[': 'bracket_left',
+            ']': 'bracket_right',
+            '{': 'brace_left',
+            '}': 'brace_right',
+            '\\': 'backslash',
+            '|': 'pipe',
+            ';': 'semicolon',
+            ':': 'colon',
+            "'": 'apostrophe',
+            '"': 'quote',
+            ',': 'comma',
+            '<': 'less',
+            '.': 'period',
+            '>': 'greater',
+            '/': 'slash',
+            '?': 'question'
+        }
         
-        # Handle character keys
-        if isinstance(key, KeyCode) and key.char:
-            return key.char.lower()
+        # Handle number keys
+        if name.isdigit():
+            return name
         
-        # Fallback to key name
-        return key.name.lower() if hasattr(key, 'name') else str(key)
+        # Handle letter keys
+        if len(name) == 1:
+            return name.lower()
+        
+        # Return special key if found, otherwise return original
+        return special_keys.get(name, name)
 
     def get_current_mode(self) -> str:
-        """Determine current mode based on active modifiers with consistent ordering"""
+        """Determine current mode based on pressed keys with consistent ordering"""
         try:
-            # Get active modifier names in sorted order for consistent mode names
-            active_mod_names = sorted({
-                self.modifier_keys[k] 
-                for k in self.active_modifiers 
-                if k in self.modifier_keys
-            })
-            
-            # Create mode name from active modifiers
-            if active_mod_names:
-                mode_name = '_'.join(active_mod_names)
-                if mode_name in self.config.get('modes', {}):
-                    self.current_mode = mode_name
-                    if self.should_log():
-                        print(f"Active modifier mode: {mode_name}")
-                    return mode_name
-            
-            # Check for full key sequence mode only if no modifiers are active
+            # 1. Check full sequence of pressed keys (including non-modifiers)
             if self.pressed_keys:
                 full_sequence = '_'.join(self.pressed_keys)
                 if full_sequence in self.config.get('modes', {}):
                     self.current_mode = full_sequence
                     if self.should_log():
-                        print(f"Key sequence mode: {full_sequence}")
+                        print(f"Active key sequence mode: {full_sequence}")
                     return full_sequence
+            
+            # 2. Check modifier-only sequence (only modifier keys in press order)
+            modifier_sequence = [
+                key for key in self.pressed_keys 
+                if key in ['super', 'shift', 'alt', 'ctrl']
+            ]
+            if modifier_sequence:
+                mode_name = '_'.join(modifier_sequence)
+                if mode_name in self.config.get('modes', {}):
+                    self.current_mode = mode_name
+                    if self.should_log():
+                        print(f"Active modifier mode: {mode_name}")
+                    return mode_name
             
             # Fallback to base mode if no special mode is active
             return 'base'
@@ -631,105 +715,249 @@ class KeyboardController:
             if self.should_log():
                 print(f"Error updating lighting: {e}")
             traceback.print_exc()
-
-    def on_press(self, key):
-        """Handle key press events"""
+    
+    def connect_to_pipe(self):
+        """Connect to the existing pipe created by the root process"""
         try:
-            key_identifier = self.normalize_key_event(key)
-            
-            # Track modifiers
-            if key in self.modifier_keys:
-                mod_name = self.modifier_keys[key]
-                self.active_modifiers.add(key)
-                # Add modifier to pressed keys if not already present
-                if mod_name not in self.pressed_keys:
-                    self.pressed_keys.append(mod_name)
-                if self.should_log():
-                    print(f"Modifier pressed: {mod_name} (active: {[self.modifier_keys[k] for k in self.active_modifiers]})")
+            # Wait for pipe to be created with timeout
+            timeout = 10
+            start_time = time.time()
+            while time.time() - start_time < timeout:
+                if os.path.exists(self.pipe_path):
+                    break
+                time.sleep(0.2)
             else:
-                # Non-modifier
+                raise RuntimeError(f"Failed to find pipe within {timeout} seconds")
+            
+            # Verify pipe exists
+            if not os.path.exists(self.pipe_path):
+                raise RuntimeError("Named pipe not found. Is the root process running?")
+            
+            # Check pipe permissions
+            stat = os.stat(self.pipe_path)
+            print(f"Pipe found: UID={stat.st_uid}, GID={stat.st_gid}, Mode={oct(stat.st_mode)}")
+            
+            # Open pipe for reading
+            self.pipe_fd = os.open(self.pipe_path, os.O_RDONLY | os.O_NONBLOCK)
+            print("Connected to keyboard event pipe")
+            
+            # Start thread to read events
+            self.pipe_thread = threading.Thread(target=self.read_pipe_events, daemon=True)
+            self.pipe_thread.start()
+            print("Pipe reader thread started")
+            
+        except Exception as e:
+            print(f"Error connecting to pipe: {e}")
+            traceback.print_exc()
+            raise
+
+    def read_pipe_events(self):
+        """Read keyboard events from the pipe"""
+        try:
+            print("Starting pipe reader thread")
+            # Create a buffer for incomplete lines
+            buffer = ""
+            read_count = 0
+            
+            while self.pipe_fd:
+                # Check if there's data to read
+                r, _, _ = select.select([self.pipe_fd], [], [], 0.1)
+                if not r:
+                    continue
+                
+                try:
+                    # Read data from pipe
+                    data = os.read(self.pipe_fd, 4096).decode()
+                    read_count += 1
+                    
+                    if not data:
+                        print("Pipe closed by writer")
+                        break
+                    
+                    if data:
+                        print(f"Received data ({len(data)} bytes) on read #{read_count}: {data}")
+                    
+                    # Add to buffer and split into lines
+                    buffer += data
+                    lines = buffer.splitlines(keepends=True)
+                    
+                    # Process complete lines, keep incomplete in buffer
+                    buffer = ""
+                    for line in lines:
+                        if line.endswith('\n'):
+                            try:
+                                event = json.loads(line.strip())
+                                if self.should_log():
+                                    print(f"Processing event: {event}")
+                                
+                                if event['type'] == 'press':
+                                    self.on_press_str(event['key'])
+                                elif event['type'] == 'release':
+                                    self.on_release_str(event['key'])
+                            except json.JSONDecodeError:
+                                print(f"Invalid JSON: {line}")
+                            except KeyError:
+                                print(f"Missing keys in event: {line}")
+                            except Exception as e:
+                                print(f"Error processing event: {e}")
+                        else:
+                            # Incomplete line, keep in buffer
+                            buffer = line
+                            print(f"Buffer saved: {buffer}")
+                
+                except BlockingIOError:
+                    # No data available
+                    pass
+                except OSError as e:
+                    if e.errno == 11:  # Resource temporarily unavailable
+                        continue
+                    else:
+                        print(f"OSError in pipe read: {e}")
+                        break
+                except Exception as e:
+                    print(f"Unexpected error in pipe read: {e}")
+                    break
+                
+        except Exception as e:
+            print(f"Error in pipe reader: {e}")
+            traceback.print_exc()
+        finally:
+            if self.pipe_fd:
+                os.close(self.pipe_fd)
+                self.pipe_fd = None
+
+    def on_press_str(self, key_name: str):
+        """Handle key press events from string"""
+        try:
+            key_identifier = self.normalize_key_str(key_name)
+            
+            if self.should_log():
+                print(f"KEY PRESS: {key_name} -> {key_identifier}")
+            
+            # Add to pressed keys if not already present
+            if key_identifier not in self.pressed_keys:
+                self.pressed_keys.append(key_identifier)
                 if self.should_log():
-                    print(f"Key pressed: {key_identifier}")
-                if key_identifier not in self.pressed_keys:
-                    self.pressed_keys.append(key_identifier)
+                    print(f"Keys pressed: {list(self.pressed_keys)}")
             
             # Update lighting
             self.update_lighting()
             
-            # Update workspaces when modifier state changes (only if i3 enabled)
-            if self.i3_enabled and key in [Key.cmd, Key.alt]:
+            # Update workspaces when modifier state changes (only if integration enabled)
+            if self.wm_integration_enabled and key_identifier in ['super', 'alt']:
                 self.update_workspaces()
         except Exception as e:
             if self.should_log():
                 print(f"Error in on_press: {e}")
 
-    def on_release(self, key):
-        """Handle key release events"""
+    def on_release_str(self, key_name: str):
+        """Handle key release events from string"""
         try:
-            key_identifier = self.normalize_key_event(key)
+            key_identifier = self.normalize_key_str(key_name)
             
-            if key in self.modifier_keys:
-                mod_name = self.modifier_keys[key]
-                # Remove from active modifiers
-                if key in self.active_modifiers:
-                    self.active_modifiers.remove(key)
-                # Remove from pressed keys
-                if mod_name in self.pressed_keys:
-                    if self.should_log():
-                        print(f"Modifier released: {mod_name} (active: {[self.modifier_keys[k] for k in self.active_modifiers]})")
-                    self.pressed_keys.remove(mod_name)
-            else:
-                if key_identifier in self.pressed_keys:
-                    if self.should_log():
-                        print(f"Key released: {key_identifier}")
-                    self.pressed_keys.remove(key_identifier)
+            if self.should_log():
+                print(f"KEY RELEASE: {key_name} -> {key_identifier}")
+            
+            # Remove from pressed keys
+            if key_identifier in self.pressed_keys:
+                self.pressed_keys.remove(key_identifier)
+                if self.should_log():
+                    print(f"Keys pressed: {list(self.pressed_keys)}")
             
             # Update lighting
             self.update_lighting()
-            
-            # FIX: Maintain current mode if any keys are still pressed
-            if self.pressed_keys:
-                # Check if we should stay in the current mode
-                if self.current_mode != 'base':
-                    # If the current mode is based on modifiers and there are still active modifiers, keep it
-                    if any(m in self.pressed_keys for m in ['super', 'shift', 'alt', 'ctrl']):
-                        return
-                    # If the current mode is based on a sequence and there are still pressed keys, keep it
-                    if self.current_mode in self.config.get('modes', {}):
-                        return
-                # Otherwise fall back to base mode
-                self.current_mode = 'base'
         except Exception as e:
             if self.should_log():
                 print(f"Error in on_release: {e}")
 
-    def start_i3_listener(self):
-        """Listen for i3 window events (only if enabled)"""
-        if not self.i3_enabled or not I3_AVAILABLE:
-            return
-            
+    def listen_hyprland_events(self):
+        """Listen for Hyprland workspace events"""
         try:
-            i3 = i3ipc.Connection()
-            i3.on('window', self.on_i3_event)
+            # Get the Hyprland instance signature
+            instance_sig = os.getenv('HYPRLAND_INSTANCE_SIGNATURE')
+            if not instance_sig:
+                print("HYPRLAND_INSTANCE_SIGNATURE not set")
+                return
+                
+            # Get XDG runtime directory
+            xdg_runtime_dir = os.getenv('XDG_RUNTIME_DIR')
+            if not xdg_runtime_dir:
+                print("XDG_RUNTIME_DIR not set, using fallback")
+                xdg_runtime_dir = f"/run/user/{os.getuid()}"
+                
+            # Correct socket path using XDG_RUNTIME_DIR
+            socket_path = os.path.join(xdg_runtime_dir, 'hypr', instance_sig, '.socket2.sock')
+            
+            if not os.path.exists(socket_path):
+                print(f"Hyprland socket not found at {socket_path}")
+                return
+                
+            sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            sock.connect(socket_path)
+            
             if self.should_log():
-                print("Starting i3 event listener")
-            i3.main()
+                print("Connected to Hyprland event socket")
+                
+            while True:
+                # Check if we should stop
+                if not self.wm_integration_enabled:
+                    break
+                    
+                ready = select.select([sock], [], [], 1)
+                if ready[0]:
+                    data = sock.recv(4096)
+                    if not data:
+                        break
+                        
+                    event = data.decode().strip()
+                    # Handle relevant events
+                    if event.startswith(("workspace>>", "openwindow>>", "closewindow>>", "movewindow>>")):
+                        if self.should_log():
+                            print(f"Hyprland event: {event}")
+                        self.update_workspaces()
+                        self.update_lighting()
         except Exception as e:
             if self.should_log():
-                print(f"Error in i3 listener: {e}")
+                print(f"Error in Hyprland listener: {e}")
+        finally:
+            try:
+                sock.close()
+            except:
+                pass
 
-    def on_i3_event(self, i3, event):
-        """Handle i3 window events (only if enabled)"""
-        if not self.i3_enabled:
+    def start_wm_listener(self):
+        """Listen for window manager events"""
+        if not self.wm_integration_enabled:
             return
             
         try:
-            if event.change in ['new', 'close', 'move']:
-                self.update_workspaces()
-                self.update_lighting()
+            if self.wm_type == 'i3' and I3_AVAILABLE:
+                i3 = i3ipc.Connection()
+                i3.on('window', self.on_wm_event)
+                if self.should_log():
+                    print("Starting i3 event listener")
+                i3.main()
+            elif self.wm_type == 'hyprland':
+                if self.should_log():
+                    print("Starting Hyprland event listener")
+                self.listen_hyprland_events()
         except Exception as e:
             if self.should_log():
-                print(f"Error in i3 event handler: {e}")
+                print(f"Error in WM listener: {e}")
+
+    def on_wm_event(self, i3, event):
+        """Handle window manager events"""
+        if not self.wm_integration_enabled:
+            return
+            
+        try:
+            if self.wm_type == 'i3':
+                if event.change in ['new', 'close', 'move']:
+                    self.update_workspaces()
+                    self.update_lighting()
+        except Exception as e:
+            if self.should_log():
+                print(f"Error in WM event handler: {e}")
 
     def start_pywal_watcher(self):
         """Start watching pywal color file for changes"""
@@ -783,23 +1011,17 @@ class KeyboardController:
     def run(self):
         """Main application loop"""
         try:
-            if self.i3_enabled:
+            # Connect to the existing pipe (assuming first file is already running)
+            self.connect_to_pipe()
+            
+            if self.wm_integration_enabled:
                 self.update_workspaces()
                 
-                # Start i3 listener thread only if enabled
-                self.i3_thread = threading.Thread(target=self.start_i3_listener, daemon=True)
-                self.i3_thread.start()
+                # Start WM listener thread only if enabled
+                self.wm_thread = threading.Thread(target=self.start_wm_listener, daemon=True)
+                self.wm_thread.start()
                 if self.should_log():
-                    print("i3 listener started")
-            
-            # Start keyboard listener
-            self.key_listener = keyboard.Listener(
-                on_press=self.on_press,
-                on_release=self.on_release
-            )
-            self.key_listener.start()
-            if self.should_log():
-                print("Keyboard listener started")
+                    print(f"{self.wm_type} listener started")
             
             # Start pywal file watcher if enabled
             if self.config.get('pywal', True):
@@ -826,14 +1048,15 @@ class KeyboardController:
                 if self.config_updated:
                     self.reload_config()
                 
-                # Periodically update workspaces only if enabled
-                if self.i3_enabled:
+                # Periodically update workspaces only if integration enabled
+                if self.wm_integration_enabled:
                     self.update_workspaces()
         except KeyboardInterrupt:
             if self.should_log():
                 print("Exiting...")
-            if self.key_listener:
-                self.key_listener.stop()
+            if self.pipe_fd:
+                os.close(self.pipe_fd)
+                self.pipe_fd = None
             if self.pywal_watchdog_observer:
                 self.pywal_watchdog_observer.stop()
                 self.pywal_watchdog_observer.join()

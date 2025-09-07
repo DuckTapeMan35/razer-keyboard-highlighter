@@ -1,0 +1,51 @@
+#!/root/razer_keyboard_highlighter_venv/bin/python
+import keyboard
+import sys
+import os
+import json
+import pwd
+
+def main():
+    if len(sys.argv) < 2:
+        print("Usage: python keyboard_listener.py <pipe_path> [username]")
+        sys.exit(1)
+    
+    pipe_path = sys.argv[1]
+    user_name = sys.argv[2] if len(sys.argv) > 2 else ''
+    pipe_dir = os.path.dirname(pipe_path)
+    
+    try:
+        user_info = pwd.getpwnam(user_name)
+        uid = user_info.pw_uid
+        gid = user_info.pw_gid
+        
+        # Create directory if it doesn't exist and set ownership
+        os.makedirs(pipe_dir, exist_ok=True)
+        # Change ownership of the directory itself
+        os.chown(pipe_dir, uid, gid)
+        
+        if os.path.exists(pipe_path):
+            os.remove(pipe_path)
+        os.mkfifo(pipe_path, 0o600)
+        os.chown(pipe_path, uid, gid)
+        
+        print(f"Pipe created at {pipe_path} for {user_name}")
+        
+        with open(pipe_path, 'w') as pipe:
+            def send_event(event_type, key_name):
+                data = {"type": event_type, "key": key_name}
+                pipe.write(json.dumps(data) + '\n')
+                pipe.flush()
+            
+            keyboard.hook(lambda e: send_event(
+                'press' if e.event_type == keyboard.KEY_DOWN else 'release',
+                e.name
+            ))
+            keyboard.wait()
+            
+    except Exception as e:
+        print(f"Error: {e}")
+        sys.exit(1)
+
+if __name__ == "__main__":
+    main()
