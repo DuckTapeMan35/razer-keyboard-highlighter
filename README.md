@@ -1,19 +1,23 @@
 # Razer keyboard highlighter
 
-Support for highlighting keys when held according to a configuration file with pywal and i3wm integration, supports key combinations of any order/size
+Support for highlighting keys when held according to a configuration file with pywal, i3wm and hyprland integration, supports key combinations of any order/size
+
+## > [!IMPORTANT]
+> In its current state this application is not secure, I am researching on how to properly forward keypress events to the light controller in such a way that no other process can sniff them, but at this point in time any process running with the same permissions as the user running `razer_controller` can sniff keypresses, meaning this application introduces a vulnerability into your system.
 
 ## Requirements
 
 ### General requirements
 
-- i3wm (for i3wm integration)
-- pywal (for pywal support)
+- i3wm (optional)
+- hyprland (optional)
+- pywal (optional)
 - python
 
 ### Python libraries
 
 - i3ipc
-- pynput
+- keyboard
 - watchdog
 - pyyaml
 - openrazer
@@ -37,11 +41,10 @@ chmod +x setup.sh
 ./setup.sh
 ```
 
+This will create a daemon that listens to your keypresses and writes them to a pipe, then you can use the command `razer_controller` to start the application. If you want this to work on startup you need to start it in your window manager's config file (so it starts as a child process of the window manager), otherwise the window manager integrations will not work. If you don't use a window manager/don't want the integrations, you can make a daemon and start/enable it, however, note that `razer_controller` must be run as a user without root permissions.
+
 Afterwards simply edit the config file under `.config/keyboard-razer-highlighter/` (where the script will be placed), details on how a proper config file should look below, in this repository there is also my personal config file as an example.
 
-### Alternative method
-
-If you do not wish to create a daemon and use i3wm it is possible to run it by simply adding `exec --no-startup-id path/to/razer_keyboard_highlighter.py` to your i3 config file, however I don't recommend doing this if you use pywal because pywal must be executed before this file for it to work and i3 does not sequencially execute commands as they are in its config file, a better alternative would be creating a bash script to first execute pywal and then executing `razer_keyboard_highlighter.py` and running it on i3wm startup like so `exec --no-startup-id script.sh`.
 
 ## Configuration file
 
@@ -53,7 +56,7 @@ Here is my personal config file that I will be detailing the workings of:
 
 ```yaml
 pywal: true
-i3: true
+window_manager: hyprland/i3
 log: false
 
 key_positions:
@@ -273,17 +276,15 @@ modes:
 ```
 
 ### Pywal
+`pywal: true/false`, will determine wether or not pywal will be integrated.
 
-the first line should be `pywal: true/false`, this will determine wether or not pywal will be integrated.
+### window_manager
 
-### i3
-
-`i3: true/false` determines wether or not i3 is needed, however if rules that need i3 integration are present on the config, even if it is false rules will be applied, leaving out this line is the same as `i3: false`.
+`window_manager: i3/hyprland` determines wether or not i3/hyprland integration is needed, however if rules that need i3/hyprland integration are present on the config, even if it is omitted rules will be applied
 
 ### Log
 
-There are several print statements in the code so the line `log: true/false` activates or deactivates them, by default log is `false`. If you are running this as the daemon created with `./setup.sh` it would be printing to a file called `service.log` which would get very big very fast.
-
+There are several print statements in the code so the line `log: true/false` activates or deactivates them, by default log is `false`
 ### Key positions
 
 Key positions follow the structure of
@@ -300,7 +301,7 @@ key_name can be anything and the tuple corresponds to the (row, column) of the k
 
 #### Base
 
-The base mode is of special importance, it represents what happens when no valid key combos are held, I recommend setting this to a single solid color. The reason why I don't support animations is because they have a fade-in effect, that is a quirk of the openrazer api and I can't do anything about it. Perhaps at a later date this feature will be added.
+The base mode is of special importance, it represents what happens when no valid key combos are held, I recommend setting this to a single solid color or a solid color with workspaces. The reason why I don't support animations is because they have a fade-in effect, that is a quirk of the openrazer api and I can't do anything about it. Perhaps at a later date this feature will be added.
 
 #### Keys and Rules
 
