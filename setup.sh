@@ -19,40 +19,34 @@ mkdir -p "$CONFIG_DIR"
 echo "Copying script and config file to config directory..."
 sudo cp "$RAZER_CONTROLLER" "/usr/bin/"
 sudo cp "$KEYBOARD_LISTENER" "/usr/bin/"
-sudo cp "$(pwd)/$CONFIG_NAME" "$CONFIG_DIR/$CONFIG_NAME"
 chmod +x "/usr/bin/$RAZER_CONTROLLER"
 chmod +x "/usr/bin/$KEYBOARD_LISTENER"
 
 # Install Arch Linux dependencies
-echo "Installing required packages..."
-sudo pacman -Sy --noconfirm python python-pip python-virtualenv openrazer-daemon python-openrazer python-watchdog python-yaml
+echo "Installing $USER required packages..."
+sudo pacman -Sy --noconfirm python python-pip openrazer-daemon python-openrazer python-watchdog python-yaml
 systemctl enable --now --user openrazer-daemon.service
 
 # Add user to plugdev group
 echo "Adding user to plugdev group..."
 sudo gpasswd -a $USER plugdev
 
-# Create Python virtual environment with system packages
-echo "Creating Python virtual environment..."
-virtualenv --system-site-packages "$CONFIG_DIR/.venv"
-
 # Install Python dependencies
-echo "Installing Python packages..."
+echo "Installing Root Python packages..."
 sudo python -m venv /root/razer_keyboard_highlighter_venv
 sudo /root/razer_keyboard_highlighter_venv/bin/pip install --upgrade pip
-sudo /root/razer_keyboard_highlighter_venv/bin/pip install keyboard
+sudo /root/razer_keyboard_highlighter_venv/bin/pip install keyboard psutil
 
 # Create default config file if needed
 if [ ! -f "$CONFIG_DIR/config.yaml" ]; then
     echo "Creating default config.yaml..."
     cat > "$CONFIG_DIR/config.yaml" << 'EOL'
-pywal: true
-key_positions: {}
+pywal: false
 modes:
   base:
     rules:
       - keys: ['all']
-        color: 'color[1]'
+        color: '[255,0,0]'
 EOL
 fi
 
@@ -65,16 +59,14 @@ CURRENT_DISPLAY=${DISPLAY:-":0"}
 cat << EOL | sudo tee "/etc/systemd/system/keyboard-listener.service" > /dev/null
 [Unit]
 Description=Keyboard Listener Service
+After=graphical.target display-manager.service
+Wants=graphical.target
 
 [Service]
 Type=simple
 User=root
-ExecStart=/usr/bin/python /usr/bin/keyboard_listener /home/$USER/.razer-keyboard-pipe/events.pipe $USER
-Restart=on-failure
-RestartSec=5
+ExecStart=/usr/bin/keyboard_listener $USER
 Environment=DISPLAY=${CURRENT_DISPLAY}
-StandardOutput=journal
-StandardError=journal
 
 [Install]
 WantedBy=default.target
@@ -95,5 +87,5 @@ echo "Service control:"
 echo "  sudo systemctl status $SERVICE_NAME"
 echo "  sudo systemctl restart $SERVICE_NAME"
 echo ""
-echo "View logs: tail -f $CONFIG_DIR/service.log"
+echo "View logs: tail -f $CONFIG_DIR/logs.txt"
 echo "Edit config: $CONFIG_DIR/config.yaml"

@@ -16,7 +16,7 @@ Support for highlighting keys when held according to a configuration file with p
 
 ### Python libraries
 
-- i3ipc
+- i3ipc (optional)
 - keyboard
 - watchdog
 - pyyaml
@@ -41,7 +41,7 @@ chmod +x setup.sh
 ./setup.sh
 ```
 
-This will create a daemon that listens to your keypresses and writes them to a pipe, then you can use the command `razer_controller` to start the application. If you want this to work on startup you need to start it in your window manager's config file (so it starts as a child process of the window manager), otherwise the window manager integrations will not work. If you don't use a window manager/don't want the integrations, you can make a daemon and start/enable it, however, note that `razer_controller` must be run as a user without root permissions.
+This will create a daemon that listens to your keypresses and writes them to a socket, then you can use the command `razer_controller` to start the application. If you want this to work on startup you need to start it in your window manager's config file (so it starts as a child process of the window manager), otherwise the window manager integrations will not work. If you don't use a window manager/don't want the integrations, you can make a daemon and start/enable it, however, note that `razer_controller` must be run as a user without root permissions and must also run after `keyboard_listener`.
 
 Afterwards simply edit the config file under `.config/keyboard-razer-highlighter/` (where the script will be placed), details on how a proper config file should look below, in this repository there is also my personal config file as an example.
 
@@ -57,7 +57,7 @@ Here is my personal config file that I will be detailing the workings of:
 ```yaml
 pywal: true
 window_manager: hyprland/i3
-log: false
+log_level: info
 
 key_positions:
   # Define positions for individual keys, the tuple corrsponds to (row, column) of they keyboard as defioned by openrazer
