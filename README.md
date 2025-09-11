@@ -2,8 +2,8 @@
 
 Support for highlighting keys when held according to a configuration file with pywal, i3wm and hyprland integration, supports key combinations of any order/size
 
-## > [!IMPORTANT]
-> In its current state this application is not secure, I am researching on how to properly forward keypress events to the light controller in such a way that no other process can sniff them, but at this point in time any process running with the same permissions as the user running `razer_controller` can sniff keypresses, meaning this application introduces a vulnerability into your system.
+## IMPORTANT
+In its current state this application is not secure, I am researching on how to properly forward keypress events to the light controller in such a way that no other process can sniff them, but at this point in time any process running with the same permissions as the user running `razer_controller` can sniff keypresses, meaning this application introduces a vulnerability into your system.
 
 ## Requirements
 
@@ -45,18 +45,15 @@ This will create a daemon that listens to your keypresses and writes them to a s
 
 Afterwards simply edit the config file under `.config/keyboard-razer-highlighter/` (where the script will be placed), details on how a proper config file should look below, in this repository there is also my personal config file as an example.
 
-
 ## Configuration file
 
 The configuration file should be named config.yaml and be placed under `.config/razer-keyboard-highlighter/`
-
-Note: whenever the config file is changed the service must be restarted.
 
 Here is my personal config file that I will be detailing the workings of:
 
 ```yaml
 pywal: true
-window_manager: hyprland/i3
+window_manager: hyprland
 log_level: info
 
 key_positions:
@@ -284,7 +281,10 @@ modes:
 
 ### Log
 
-There are several print statements in the code so the line `log: true/false` activates or deactivates them, by default log is `false`
+The line `log_level: debug/info/warning/error/critical` sets the level, by default `log_level` is `info`. 
+
+Note: the logging of mode changes cacording to keys has a level of critical because otherwise there would be too many logs to make any sense of them.
+
 ### Key positions
 
 Key positions follow the structure of
