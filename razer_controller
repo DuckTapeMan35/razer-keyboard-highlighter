@@ -28,7 +28,17 @@ try:
 except ImportError:
     I3_AVAILABLE = False
 
-# Setup logging
+# Create a memory-efficient logger formatter
+class MemoryEfficientFormatter(logging.Formatter):
+    def format(self, record):
+        # Use a simpler format for most messages
+        if record.levelno <= logging.INFO:
+            return f"{record.getMessage()}"
+        else:
+            # More detailed format for warnings and errors
+            return f"{record.name} - {record.levelname} - {record.getMessage()}"
+            
+# Update your setup_logger function
 def setup_logger(level=logging.INFO):
     # Create log directory if it doesn't exist
     log_dir = os.path.expanduser('~/.config/razer-keyboard-highlighter')
@@ -38,8 +48,8 @@ def setup_logger(level=logging.INFO):
     logger = logging.getLogger('razer_keyboard_highlighter')
     logger.setLevel(level)
     
-    # Create formatter
-    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    # Create memory-efficient formatter
+    formatter = MemoryEfficientFormatter('%(asctime)s - %(message)s')
     
     # Create file handler
     fh = logging.FileHandler(log_file)
@@ -81,6 +91,16 @@ class ConfigFileHandler(FileSystemEventHandler):
             self.callback()
 
 class KeyboardController:
+    __slots__ = [
+        'config', 'device_manager', 'razer_keyboard', 'rows', 'cols',
+        'key_positions', 'wm_type', 'pressed_keys', 'colors_lock',
+        'colors', 'key_listener', 'wm_thread', 'pywal_updated',
+        'config_updated', 'pywal_watchdog_observer', 'config_watchdog_observer',
+        'current_mode', 'modifier_keys', 'pipe_fd', 'wm_integration_enabled',
+        'wm_lock', 'current_key_states', 'need_redraw', 'last_non_empty_workspaces',
+        'pipe_thread', 'redraw_count', 'skip_count', '_string_cache'
+    ]
+
     def __init__(self):
         try:
             # Initialize with error handling
@@ -88,6 +108,8 @@ class KeyboardController:
             
             # Load configuration first
             self.config = self.load_config()
+
+            self._string_cache = {}
             
             # Set log level based on config
             log_level = self.config.get('log_level', 'INFO').upper()
@@ -164,12 +186,23 @@ class KeyboardController:
             if 'base' not in self.config['modes']:
                 self.config['modes']['base'] = {'rules': [{'keys': ['all'], 'color': '(0,255,0)'}]}
             
+            # Track current state for optimization
+            self.current_key_states = [[(0, 0, 0) for _ in range(self.cols)] for _ in range(self.rows)]
+            self.need_redraw = False
+            self.last_non_empty_workspaces = set()
+            
             logger.info("Keyboard controller initialized successfully")
             
         except Exception as e:
             logger.error(f"Initialization failed: {e}")
             logger.error(traceback.format_exc())
             raise
+
+    def get_cached_string(self, s):
+        """Get a cached version of a string to avoid duplication"""
+        if s not in self._string_cache:
+            self._string_cache[s] = s
+        return self._string_cache[s]
 
     def needs_wm_integration(self) -> bool:
         """Check if any rules require workspace information"""
@@ -220,7 +253,7 @@ class KeyboardController:
             return {}
 
     def parse_key_positions(self) -> Dict[str, List[Tuple[int, int]]]:
-        """Parse key positions from config, with fallback values"""
+        """Parse key positions from config, with memory optimization"""
         positions = {}
         
         # Create 'all' key group using actual keyboard dimensions
@@ -230,6 +263,9 @@ class KeyboardController:
         if 'key_positions' in self.config:
             for key, value in self.config['key_positions'].items():
                 try:
+                    # Intern the key name to reduce duplication
+                    interned_key = sys.intern(key)
+                    
                     if isinstance(value, list):
                         # Convert all elements to (int, int)
                         converted = []
@@ -247,21 +283,21 @@ class KeyboardController:
                                         col = int(parts[1].strip())
                                         converted.append((row, col))
                                     else:
-                                        logger.warning(f"Invalid tuple format for key '{key}': {item}")
+                                        logger.warning(f"Invalid tuple format for key '{interned_key}': {item}")
                                 except ValueError as e:
-                                    logger.warning(f"Error parsing position '{item}' for key '{key}': {e}")
+                                    logger.warning(f"Error parsing position '{item}' for key '{interned_key}': {e}")
                             else:
-                                logger.warning(f"Invalid position format for key '{key}': {item}")
-                        positions[key] = converted
+                                logger.warning(f"Invalid position format for key '{interned_key}': {item}")
+                        positions[interned_key] = converted
                     elif isinstance(value, (tuple, list)) and len(value) == 2:
                         # Single position
-                        positions[key] = [(int(value[0]), int(value[1]))]
+                        positions[interned_key] = [(int(value[0]), int(value[1]))]
                     else:
-                        logger.warning(f"Invalid position format for key '{key}': {value}")
-                        positions[key] = []
+                        logger.warning(f"Invalid position format for key '{interned_key}': {value}")
+                        positions[interned_key] = []
                 except Exception as e:
                     logger.warning(f"Error parsing position for key '{key}': {e}")
-                    positions[key] = []
+                    positions[sys.intern(key)] = []
         
         # Add default positions for essential keys as integers
         defaults = {
@@ -284,12 +320,13 @@ class KeyboardController:
         
         for key, pos_list in defaults.items():
             if key not in positions:
-                # Convert to list of integer tuples
-                positions[key] = [(int(r), int(c)) for r, c in pos_list]
-                logger.info(f"Added default position for key '{key}'")
+                # Convert to list of integer tuples and intern the key
+                interned_key = sys.intern(key)
+                positions[interned_key] = [(int(r), int(c)) for r, c in pos_list]
+                logger.info(f"Added default position for key '{interned_key}'")
         
         # Ensure all positions are integers
-        for key in positions:
+        for key in list(positions.keys()):
             new_list = []
             for pos in positions[key]:
                 if isinstance(pos, (tuple, list)) and len(pos) == 2:
@@ -485,14 +522,22 @@ class KeyboardController:
         if self.wm_lock:
             with self.wm_lock:
                 try:
-                    self.non_empty_workspaces = self.find_non_empty_workspaces()
-                    logger.info(f"Updated workspaces: {self.non_empty_workspaces}")
+                    current_workspaces = set(self.find_non_empty_workspaces())
+                    # Only mark for redraw if workspaces have changed
+                    if current_workspaces != self.last_non_empty_workspaces:
+                        self.last_non_empty_workspaces = current_workspaces
+                        self.need_redraw = True
+                        logger.info(f"Workspaces changed: {current_workspaces}")
                 except Exception as e:
                     logger.error(f"Error updating workspaces: {e}")
         else:
             try:
-                self.non_empty_workspaces = self.find_non_empty_workspaces()
-                logger.info(f"Updated workspaces: {self.non_empty_workspaces}")
+                current_workspaces = set(self.find_non_empty_workspaces())
+                # Only mark for redraw if workspaces have changed
+                if current_workspaces != self.last_non_empty_workspaces:
+                    self.last_non_empty_workspaces = current_workspaces
+                    self.need_redraw = True
+                    logger.info(f"Workspaces changed: {current_workspaces}")
             except Exception as e:
                 logger.error(f"Error updating workspaces: {e}")
 
@@ -521,6 +566,8 @@ class KeyboardController:
                 logger.info("Configuration reloaded")
 
                 self.config_updated = False
+                # Force redraw after config reload
+                self.need_redraw = True
                 # Update lighting after reload
                 self.update_lighting()
             except Exception as e:
@@ -540,8 +587,8 @@ class KeyboardController:
             logger.error(f"Error getting positions for {key_spec}: {e}")
         return []
 
-    def apply_rule(self, rule: Dict[str, Any]):
-        """Apply a lighting rule from configuration"""
+    def apply_rule(self, rule: Dict[str, Any], desired_state: Dict[Tuple[int, int], Tuple[int, int, int]]):
+        """Apply a lighting rule to the desired state"""
         try:
             # Get key positions
             keys = rule.get('keys', [])
@@ -559,7 +606,7 @@ class KeyboardController:
                         row = int(pos[0])
                         col = int(pos[1])
                         if i < len(colors):
-                            self.razer_keyboard.fx.advanced.matrix[row, col] = colors[i]
+                            desired_state[(row, col)] = colors[i]
                     except (ValueError, TypeError):
                         continue
             
@@ -582,8 +629,8 @@ class KeyboardController:
                             row = int(pos[0])
                             col = int(pos[1])
                             workspace_num = str(i + 1)
-                            if (workspace_num in self.non_empty_workspaces) == value:
-                                self.razer_keyboard.fx.advanced.matrix[row, col] = color
+                            if (workspace_num in self.last_non_empty_workspaces) == value:
+                                desired_state[(row, col)] = color
                         except (ValueError, TypeError):
                             continue
                 return
@@ -591,12 +638,12 @@ class KeyboardController:
             # Handle simple color rule
             if 'color' in rule:
                 color = self.resolve_color(rule['color'])
-                logger.critical(f"Setting {keys} to {color}")
+                logger.debug(f"Setting {keys} to {color}")
                 for pos in positions:
                     try:
                         row = int(pos[0])
                         col = int(pos[1])
-                        self.razer_keyboard.fx.advanced.matrix[row, col] = color
+                        desired_state[(row, col)] = color
                     except (ValueError, TypeError):
                         continue
         except Exception as e:
@@ -604,13 +651,28 @@ class KeyboardController:
             logger.error(traceback.format_exc())
 
     def normalize_key_str(self, key_name: str) -> str:
-        """Normalize key name string"""
+        """Normalize key name string with memory optimization"""
         name = key_name.lower()
+        
+        # Define a set of common keys for interning
+        common_keys = {
+            'super', 'shift', 'alt', 'ctrl', 'enter', 'space', 'tab', 
+            'esc', 'escape', 'backspace', 'up', 'down', 'left', 'right',
+            'windows', 'cmd', 'control', 'alt gr', '`', '~', '!', '@',
+            '#', '$', '%', '^', '&', '*', '(', ')', '-', '_', '=', '+',
+            '[', ']', '{', '}', '\\', '|', ';', ':', "'", '"', ',', '<',
+            '.', '>', '/', '?', 'backtick', 'tilde', 'exclamation', 'at',
+            'hash', 'dollar', 'percent', 'caret', 'ampersand', 'asterisk',
+            'paren_left', 'paren_right', 'minus', 'underscore', 'equal',
+            'plus', 'bracket_left', 'bracket_right', 'brace_left', 'brace_right',
+            'backslash', 'pipe', 'semicolon', 'colon', 'apostrophe', 'quote',
+            'comma', 'less', 'period', 'greater', 'slash', 'question'
+        }
         
         # Handle modifier keys
         for mod, aliases in self.modifier_keys.items():
             if name in aliases:
-                return mod
+                return sys.intern(mod)
         
         # Handle special keys
         special_keys = {
@@ -660,14 +722,20 @@ class KeyboardController:
         
         # Handle number keys
         if name.isdigit():
-            return name
+            return sys.intern(name) if name in common_keys else name
         
         # Handle letter keys
         if len(name) == 1:
-            return name.lower()
+            normalized = name.lower()
+            return sys.intern(normalized) if normalized in common_keys else normalized
         
         # Return special key if found, otherwise return original
-        return special_keys.get(name, name)
+        if name in special_keys:
+            result = special_keys[name]
+            return sys.intern(result) if result in common_keys else result
+        
+        # For any other key, intern if it's common
+        return sys.intern(name) if name in common_keys else name
 
     def get_current_mode(self) -> str:
         """Determine current mode based on pressed keys with consistent ordering"""
@@ -699,12 +767,13 @@ class KeyboardController:
             return 'base'
 
     def update_lighting(self):
-        """Update keyboard lighting based on current state"""
+        """Update keyboard lighting based on current state - only redraw if needed"""
         try:
-            # Clear keyboard
+            # Create desired state (start with all black)
+            desired_state = {}
             for r in range(self.rows):
                 for c in range(self.cols):
-                    self.razer_keyboard.fx.advanced.matrix[r, c] = (0, 0, 0)
+                    desired_state[(r, c)] = (0, 0, 0)
             
             # Apply current mode with fallback
             current_mode = self.get_current_mode()
@@ -721,12 +790,38 @@ class KeyboardController:
             
             logger.info(f"Applying lighting for mode: {current_mode}")
             
-            # Apply all rules for the current mode
+            # Apply all rules for the current mode to desired state
             for rule in mode_config.get('rules', []):
-                self.apply_rule(rule)
+                self.apply_rule(rule, desired_state)
             
-            # Draw changes
-            self.razer_keyboard.fx.advanced.draw()
+            # Check if any keys have changed
+            needs_update = False
+            for (row, col), color in desired_state.items():
+                if self.current_key_states[row][col] != color:
+                    needs_update = True
+                    break
+            
+            # Only update if changes are detected
+            if needs_update or self.need_redraw:
+                # Clear keyboard (set all to black)
+                for r in range(self.rows):
+                    for c in range(self.cols):
+                        self.razer_keyboard.fx.advanced.matrix[r, c] = (0, 0, 0)
+                
+                # Apply desired state
+                for (row, col), color in desired_state.items():
+                    try:
+                        self.razer_keyboard.fx.advanced.matrix[row, col] = color
+                        self.current_key_states[row][col] = color
+                    except Exception as e:
+                        logger.error(f"Error setting key at ({row}, {col}): {e}")
+                
+                # Draw changes
+                self.razer_keyboard.fx.advanced.draw()
+                logger.info("Keyboard redrawn due to changes")
+                self.need_redraw = False
+            else:
+                logger.info("No changes detected, skipping redraw")
         except Exception as e:
             logger.error(f"Error updating lighting: {e}")
             logger.error(traceback.format_exc())
@@ -855,9 +950,8 @@ class KeyboardController:
         """Read keyboard events from the pipe"""
         try:
             logger.info("Starting pipe reader thread")
-            # Create a buffer for incomplete lines
-            buffer = ""
-            read_count = 0
+            # Use bytes buffer instead of string buffer
+            buffer = b""
             
             while self.pipe_fd:
                 # Check if there's data to read
@@ -866,44 +960,40 @@ class KeyboardController:
                     continue
                 
                 try:
-                    # Read data from pipe
-                    data = os.read(self.pipe_fd, 4096).decode()
-                    read_count += 1
+                    # Read data as bytes
+                    data = os.read(self.pipe_fd, 4096)
                     
                     if not data:
                         logger.info("Pipe closed by writer")
                         break
                     
-                    if data:
-                        logger.debug(f"Received data ({len(data)} bytes) on read #{read_count}")
-                    
                     # Add to buffer and split into lines
                     buffer += data
-                    lines = buffer.splitlines(keepends=True)
+                    lines = buffer.split(b'\n')
                     
                     # Process complete lines, keep incomplete in buffer
-                    buffer = ""
-                    for line in lines:
-                        if line.endswith('\n'):
-                            try:
-                                event = json.loads(line.strip())
-                                logger.debug(f"Processing event: {event}")
-                                
-                                if event['type'] == 'press':
-                                    self.on_press_str(event['key'])
-                                elif event['type'] == 'release':
-                                    self.on_release_str(event['key'])
-                            except json.JSONDecodeError:
-                                logger.error(f"Invalid JSON: {line}")
-                            except KeyError:
-                                logger.error(f"Missing keys in event: {line}")
-                            except Exception as e:
-                                logger.error(f"Error processing event: {e}")
-                        else:
-                            # Incomplete line, keep in buffer
-                            buffer = line
-                            logger.debug(f"Buffer saved: {buffer}")
-                
+                    buffer = lines[-1]  # Last element might be incomplete
+                    for line in lines[:-1]:
+                        try:
+                            # Decode only when needed
+                            line_str = line.decode('utf-8')
+                            event = json.loads(line_str)
+                            
+                            # Use cached/interned strings for event processing
+                            event_type = self.get_cached_string(event['type'])
+                            event_key = self.normalize_key_str(event['key'])
+                            
+                            if event_type == 'press':
+                                self.on_press_str(event_key)
+                            elif event_type == 'release':
+                                self.on_release_str(event_key)
+                        except (json.JSONDecodeError, UnicodeDecodeError):
+                            logger.error(f"Invalid data: {line}")
+                        except KeyError:
+                            logger.error(f"Missing keys in event: {line}")
+                        except Exception as e:
+                            logger.error(f"Error processing event: {e}")
+                    
                 except BlockingIOError:
                     # No data available
                     pass
@@ -1085,6 +1175,8 @@ class KeyboardController:
         with self.colors_lock:
             self.colors = self.load_colors()
         self.pywal_updated = False
+        # Force redraw after color reload
+        self.need_redraw = True
         self.update_lighting()
         logger.info("Colors reloaded from pywal")
 

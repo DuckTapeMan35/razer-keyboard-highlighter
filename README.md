@@ -283,8 +283,6 @@ modes:
 
 The line `log_level: debug/info/warning/error/critical` sets the level, by default `log_level` is `info`. 
 
-Note: the logging of mode changes cacording to keys has a level of critical because otherwise there would be too many logs to make any sense of them.
-
 ### Key positions
 
 Key positions follow the structure of
