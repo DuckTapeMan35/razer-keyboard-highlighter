@@ -21,14 +21,21 @@ I have done my best to secure this application such that keypress events cannot 
 - watchdog
 - pyyaml
 - openrazer
+- psutil
 
-`pip install i3ipc pynput watchdog pyyaml`
+These libraries should be installed on the side of the user because `razer_controller` needs to run as user (no sudo permissions)
 
-The openrazer api should not be installed via pip, as I use arch this is the command to install it
-
-`sudo pacman -S openrazer-daemon python-openrazer`
+`sudo pacman -S openrazer-daemon python-openrazer i3ipc watchdog pyyaml`
 
 To use openrazer the openrazer daemon must be set up, to do so follow the tutorial here: https://openrazer.github.io/#download
+
+`keyboard` and `psutil` need to installed as root for `keyboard_listener` to function, I recommend you create a venv in `/root/razer_keyboard_highlighter_venv` and install these libraries there
+
+```bash
+sudo python -m venv /root/razer_keyboard_highlighter_venv
+sudo /root/razer_keyboard_highlighter_venv/bin/pip install --upgrade pip
+sudo /root/razer_keyboard_highlighter_venv/bin/pip install keyboard psutil
+```
 
 ## Setup
 
@@ -44,6 +51,8 @@ chmod +x setup.sh
 This will create a daemon that listens to your keypresses and writes them to a socket, then you can use the command `razer_controller` to start the application. If you want this to work on startup you need to start it in your window manager's config file (so it starts as a child process of the window manager), otherwise the window manager integrations will not work. If you don't use a window manager/don't want the integrations, you can make a daemon and start/enable it, however, note that `razer_controller` must be run as a user without root permissions and must also run after `keyboard_listener`.
 
 Afterwards simply edit the config file under `.config/keyboard-razer-highlighter/` (where the script will be placed), details on how a proper config file should look below, in this repository there is also my personal config file as an example.
+
+If wish to install this manually note that `razer_controller` must be placed under `/usr/bin/` or the `keyboard_listener` will not accept its attempt at a connection. Note, also that `razer_controller` must always be run after `keyboard_listener`
 
 ## Configuration file
 
