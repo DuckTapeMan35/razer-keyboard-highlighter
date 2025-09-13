@@ -8,7 +8,7 @@ USER=$(whoami)
 CONFIG_DIR="$HOME/.config/razer-keyboard-highlighter"
 RAZER_CONTROLLER="razer_controller"
 KEYBOARD_LISTENER="keyboard_listener"
-SERVICE_NAME="keyboard-listener.service"
+SERVICE_NAME="keyboard_listener.service"
 CONFIG_NAME="config.yaml"
 
 # Create config directory
@@ -56,7 +56,7 @@ echo "Creating systemd service..."
 # Use current DISPLAY and XAUTHORITY values
 CURRENT_DISPLAY=${DISPLAY:-":0"}
 
-cat << EOL | sudo tee "/etc/systemd/system/keyboard-listener.service" > /dev/null
+cat << EOL | sudo tee "/etc/systemd/system/$SERVICE_NAME" > /dev/null
 [Unit]
 Description=Keyboard Listener Service
 After=graphical.target display-manager.service
