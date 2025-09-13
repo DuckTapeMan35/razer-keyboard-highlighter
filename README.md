@@ -5,6 +5,8 @@ Support for highlighting keys when held according to a configuration file with p
 ## IMPORTANT
 I have done my best to secure this application such that keypress events cannot be sniffed by some third party, however, this is still theoritically possible and can be a vulnerability you are introducing in your system if you use wayland, the reason this is not a concern for x11 is because x11 has no protections against keyloggers whereas a keylogger must have sudo permissions on wayland.
 
+I also made a version for openrgb, I highly encourage you to use it instead as this is not a problem there! https://github.com/DuckTapeMan35/openrgb-keyboard-highlighter
+
 ## Requirements
 
 ### General requirements
