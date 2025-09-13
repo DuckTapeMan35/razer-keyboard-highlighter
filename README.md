@@ -48,7 +48,7 @@ chmod +x setup.sh
 
 This will create a daemon that listens to your keypresses and writes them to a socket, then you can use the command `razer_controller` to start the application. If you want this to work on startup you need to start it in your window manager's config file (so it starts as a child process of the window manager), otherwise the window manager integrations will not work. If you don't use a window manager/don't want the integrations, you can make a daemon and start/enable it, however, note that `razer_controller` must be run as a user without root permissions and must also run after `keyboard_listener`.
 
-Afterwards simply edit the config file under `.config/keyboard-razer-highlighter/` (where the script will be placed), details on how a proper config file should look below, in this repository there is also my personal config file as an example.
+Afterwards simply edit the config file under `.config/razer-keyboard-highlighter/` (where the script will be placed), details on how a proper config file should look below, in this repository there is also my personal config file as an example.
 
 If wish to install this manually note that `razer_controller` must be placed under `/usr/bin/` or the `keyboard_listener` will not accept its attempt at a connection. Note, also that `razer_controller` must always be run after `keyboard_listener`
 
