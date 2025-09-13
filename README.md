@@ -3,7 +3,7 @@
 Support for highlighting keys when held according to a configuration file with pywal, i3wm and hyprland integration, supports key combinations of any order/size
 
 ## IMPORTANT
-In its current state this application is not secure, I am researching on how to properly forward keypress events to the light controller in such a way that no other process can sniff them, but at this point in time any process running with the same permissions as the user running `razer_controller` can sniff keypresses, meaning this application introduces a vulnerability into your system.
+I have done my best to secure this application such that keypress events cannot be sniffed by some third party, however, this is still theoritically possible and can be a vulnerability you are introducing in your system if you use wayland, the reason this is not a concern for x11 is because x11 has no protections against keyloggers whereas a keylogger must have sudo permissions on wayland.
 
 ## Requirements
 
