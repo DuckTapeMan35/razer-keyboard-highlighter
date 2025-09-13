@@ -39,8 +39,6 @@ sudo /root/razer_keyboard_highlighter_venv/bin/pip install keyboard psutil
 
 ## Setup
 
-Included in this repository is a script that creates a daemon that runs razer_keyboard_highlighter.py on arch linux, if that is your desired way to run this you can do
-
 ```bash
 git clone https://github.com/DuckTapeMan35/razer-keyboard-highlighter
 cd razer-keyboard-highlighter
