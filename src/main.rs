@@ -1,9 +1,23 @@
 use openrgb2::{Color, OpenRgbClient, OpenRgbResult};
 use orkh::keyboard::KeyboardListener;
-use orkh::config::{ConfigWatcher, parse_config, LedApplicator, parse_mmsg_output};
+use orkh::config::{ConfigWatcher, parse_config, LedApplicator, parse_mmsg_output, parse_quack_output};
 use std::collections::HashSet;
 use std::process::Command;
 use tokio::time::{sleep, Duration};
+
+fn parse_workspace_output(output: &str, config_yaml: &Option<yaml_rust2::Yaml>) -> Vec<orkh::config::Value> {
+    let wm = config_yaml
+        .as_ref()
+        .and_then(|c| c["window_manager"].as_str())
+        .unwrap_or("");
+    match wm {
+        "duckwm" => parse_quack_output(output),
+        _ => {
+            let lines: Vec<&str> = output.lines().collect();
+            parse_mmsg_output(&lines)
+        }
+    }
+}
 
 #[tokio::main]
 async fn main() -> OpenRgbResult<()> {
@@ -21,7 +35,7 @@ async fn main() -> OpenRgbResult<()> {
     
     // Get receivers for updates
     let mut config_rx = watcher.subscribe_config();
-    let mut workspace_rx = watcher.subscribe_workspaces(); // Add workspace receiver
+    let mut workspace_rx = watcher.subscribe_workspaces();
     
     // Current state
     let mut config_yaml = watcher.get_config();
@@ -30,8 +44,7 @@ async fn main() -> OpenRgbResult<()> {
     
     // Get initial workspace states
     let mut workspace_states = if let Some(workspace_output) = watcher.get_recent_workspace_output() {
-        let lines: Vec<&str> = workspace_output.lines().collect();
-        parse_mmsg_output(&lines)
+        parse_workspace_output(&workspace_output, &config_yaml)
     } else {
         Vec::new()
     };
@@ -113,7 +126,6 @@ async fn main() -> OpenRgbResult<()> {
                     modes = build_modes_from_config(&config);
                 }
                 
-                // Note: get_current_mode is now async
                 let curr_mode = keyboard.state.get_current_mode(&modes).await;
                 
                 if let (Some(cfg), Some(app)) = (config.as_ref(), applicator.as_ref()) {
@@ -127,12 +139,8 @@ async fn main() -> OpenRgbResult<()> {
             
             // Workspace state changed
             Ok(workspace_output) = workspace_rx.recv() => {
-                // Parse the workspace output
-                let lines: Vec<&str> = workspace_output.lines().collect();
-                let new_states = parse_mmsg_output(&lines);
-                
-                // Update workspace states
-                workspace_states = new_states;
+                // Parse workspace output using the appropriate parser for the window manager
+                workspace_states = parse_workspace_output(&workspace_output, &config_yaml);
                 
                 // Update applicator
                 if let Some(ref mut app) = applicator.as_mut() {

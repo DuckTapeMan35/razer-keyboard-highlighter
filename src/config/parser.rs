@@ -188,3 +188,42 @@ pub fn parse_mmsg_output(lines: &[&str]) -> Vec<Value> {
 
     values
 }
+
+pub fn parse_quack_output(output: &str) -> Vec<Value> {
+    let trimmed = output.trim();
+    if trimmed.is_empty() {
+        return vec![Value::Inactive; 10];
+    }
+
+    let parsed: serde_json::Value = match serde_json::from_str(trimmed) {
+        Ok(v) => v,
+        Err(_) => return vec![Value::Inactive; 10],
+    };
+
+    let result = match parsed.get("result").and_then(|r| r.as_array()) {
+        Some(arr) => arr,
+        None => return vec![Value::Inactive; 10],
+    };
+
+    let mut values = vec![Value::Inactive; 10];
+    for item in result {
+        let position = match item.get("position").and_then(|p| p.as_u64()) {
+            Some(p) => p as usize,
+            None => continue,
+        };
+        let state = match item.get("state").and_then(|s| s.as_str()) {
+            Some(s) => s,
+            None => continue,
+        };
+        let value = match state {
+            "focused" => Value::Focused,
+            "active"  => Value::Active,
+            _         => Value::Inactive,
+        };
+        // positions 1-9 map to indices 0-8, position 10 maps to index 9 (the 0 key)
+        if position >= 1 && position <= 10 {
+            values[position - 1] = value;
+        }
+    }
+    values
+}

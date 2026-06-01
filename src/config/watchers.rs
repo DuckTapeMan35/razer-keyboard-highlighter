@@ -1,5 +1,6 @@
 use notify::{recommended_watcher, RecursiveMode, Watcher, EventKind, event::ModifyKind};
 use crate::config::parse_mmsg_output;
+use crate::config::parse_quack_output;
 use std::fs;
 use std::path::PathBuf;
 use tokio::sync::broadcast;
@@ -119,13 +120,30 @@ impl ConfigWatcher {
 
     pub fn get_workspace_states(&self) -> Vec<Value> {
         if let Some(output) = self.get_recent_workspace_output() {
-            let lines: Vec<&str> = output.lines().collect();
-            parse_mmsg_output(&lines)
+            let mut config_rx = self.subscribe_config();
+            let mut latest_config = None;
+            while let Ok(c) = config_rx.try_recv() {
+                latest_config = c;
+            }
+            let wm = latest_config
+                .as_ref()
+                .and_then(|c| c["window_manager"].as_str())
+                .unwrap_or("");
+
+            eprintln!("get_workspace_states wm: {:?}", wm);
+
+            match wm {
+                "duckwm" => parse_quack_output(&output),
+                _ => {
+                    let lines: Vec<&str> = output.lines().collect();
+                    parse_mmsg_output(&lines)
+                }
+            }
         } else {
             Vec::new()
         }
     }
-    
+
     async fn monitor_workspaces(
         workspace_tx: broadcast::Sender<String>,
         window_manager: String,
@@ -156,9 +174,6 @@ impl ConfigWatcher {
                     if output.status.success() {
                         let stdout = String::from_utf8_lossy(&output.stdout).to_string();
                         let _ = tx.send(stdout);
-                    } else {
-                        let _stderr = String::from_utf8_lossy(&output.stderr).to_string();
-                        // Error message removed
                     }
                 }
             }).await.ok();
@@ -171,9 +186,10 @@ impl ConfigWatcher {
             "mangowc" => format!("XDG_RUNTIME_DIR=/run/user/{user_uid} mmsg -gt"),
             "mango" => format!("XDG_RUNTIME_DIR=/run/user/{user_uid} mmsg -gt"),
             "mangowm" => format!("XDG_RUNTIME_DIR=/run/user/{user_uid} mmsg -gt"),
+            "duckwm" => format!("XDG_RUNTIME_DIR=/run/user/{user_uid} quack get_workspace_states"),
             _ => {
                 // Error message removed, default to mmsg
-                format!("XDG_RUNTIME_DIR=/run/user/{user_uid} mmsg -gt")
+                format!("XDG_RUNTIME_DIR=/run/user/{user_uid} quack get_workspace_states")
             }
         }
     }
